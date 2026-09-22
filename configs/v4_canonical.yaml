@@ -1,9 +1,11 @@
-model_status: canonical_audit_fix
+model_status: canonical_post_reaudit_cleanup
 full_30k_training: no_go
 
 checkpoint:
   file: groupnorm_12k_resource_marl_final.pt
   sha256: 2bbd3a2e795a215d3fcbd654d58fad154d4298b55bb50ce92f54ad50b82ddb59
+  continuation_semantics: weights_only_warm_start
+  exact_resume_implemented: false
   lineage_note: "legacy 6k -> continuation -> 12k naming; exact full optimizer/RNG lineage of legacy checkpoint is not independently reconstructable"
 
 environment:
@@ -18,7 +20,7 @@ environment:
   arrival_rate_retrieval_per_hour: 20.0
   operating_horizon_min: 480
 
-ppo_checkpoint_config:
+ppo_defaults:
   rollout_steps: 512
   min_storage_transitions: 64
   min_yc_transitions: 128
@@ -38,7 +40,11 @@ ppo_checkpoint_config:
   max_grad_norm: 0.5
   hidden: 128
   use_action_q_critic: false
-  seed: 15
+
+evaluation:
+  primary_policy_mode: stochastic
+  flat_greedy_role: diagnostic_only
+  credit_assignment_validation_seeds: [601, 602, 603, 604, 605, 606, 607, 608, 609, 610]
 
 reward:
   truck_wait_weight: 1.0
@@ -49,4 +55,4 @@ reward:
 
 experimental_switches:
   episode_complete_rollout_default: false
-  note: "A/B pilot option only; not adopted as canonical training policy"
+  note: "A/B diagnostic only; 2k re-audit pilot did not justify adoption or 4k/6k extension"

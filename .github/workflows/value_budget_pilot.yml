@@ -1,0 +1,39 @@
+name: value-budget-pilot
+
+on:
+  push:
+    branches:
+      - experiment/critic-diagnostic
+    paths:
+      - 'scripts/run_value_budget_pilot.py'
+      - 'src/**'
+      - 'diagnostic_inputs/groupnorm_12k_resource_marl_final.pt'
+      - '.github/workflows/value_budget_pilot.yml'
+  workflow_dispatch:
+
+jobs:
+  pilot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Verify checkpoint SHA
+        run: echo "2bbd3a2e795a215d3fcbd654d58fad154d4298b55bb50ce92f54ad50b82ddb59  diagnostic_inputs/groupnorm_12k_resource_marl_final.pt" | sha256sum -c -
+      - name: Run pre-registered value2 vs value20 pilot
+        env:
+          PYTHONPATH: src
+          OMP_NUM_THREADS: '1'
+          MKL_NUM_THREADS: '1'
+        run: python scripts/run_value_budget_pilot.py --checkpoint diagnostic_inputs/groupnorm_12k_resource_marl_final.pt --out value_budget_pilot
+      - name: Upload pilot artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: value-budget-pilot-20260923
+          path: value_budget_pilot
+          if-no-files-found: warn
+          retention-days: 30

@@ -164,4 +164,8 @@ def train_single_ppo(config:SinglePPOConfig,out_dir:Path,init_checkpoint:Optiona
     _write_csv(out_dir/'single_ppo_train_episodes.csv',episodes);_write_csv(out_dir/'single_ppo_updates.csv',updates);(out_dir/'single_ppo_config.json').write_text(json.dumps(asdict(config),indent=2),encoding='utf-8')
     return model,updates
 
-if __name__=='__main__': train_single_ppo(SinglePPOConfig(),Path('single_ppo_run'))
+if __name__=='__main__':
+    raise RuntimeError(
+        "Direct default 30k training is disabled while Full 30k remains No-Go. "
+        "Use an explicit audited runner/config after a Go decision."
+    )

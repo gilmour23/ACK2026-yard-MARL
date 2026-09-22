@@ -38,7 +38,7 @@ def run_episode(seed:int,method:str,model=None,arrival_rate_per_hour:float=20.0,
     return {'seed':seed,'method':method,'evaluation_mode':'stochastic' if stochastic else 'flat_greedy','policy_seed':policy_seed,'arrival_rate_per_hour':arrival_rate_per_hour,'enable_proactive':enable_proactive,'include_resource_state':include_resource_state,'yc_move_time':yc_move_time,'decisions':steps,'objective_proxy':objective,**k}
 
 
-def evaluate(out_csv:Path,method:str,checkpoint:Optional[Path]=None,seeds=range(101,131),repeats:int=1,arrival_rate_per_hour:float=20.0,enable_proactive:bool=True,include_resource_state:bool=True,yc_move_time:float=2.0,stochastic:bool=False):
+def evaluate(out_csv:Path,method:str,checkpoint:Optional[Path]=None,seeds=range(101,131),repeats:int=1,arrival_rate_per_hour:float=20.0,enable_proactive:bool=True,include_resource_state:bool=True,yc_move_time:float=2.0,stochastic:bool=True):
     model=None if method=='heuristic' else _load_model(method,checkpoint,arrival_rate_per_hour);rows=[]
     for seed in seeds:
         reps=1 if method=='heuristic' or not stochastic else repeats

@@ -44,7 +44,9 @@ def nested_group_normalized_flat_yc_logits(
     operation_logits: torch.Tensor, target_scores: torch.Tensor, pair_scores: torch.Tensor,
     mask: torch.Tensor | None = None
 ) -> torch.Tensor:
-    """Flat 2502-action logits with Operation→Target→Destination normalization.
+    """LEGACY / UNUSED in the canonical policy.
+
+    Flat 2502-action logits with Operation→Target→Destination normalization.
 
     The environment/action interface remains one flat categorical action.  The
     internal probability factorization is:
@@ -183,7 +185,9 @@ class RelocationPairYCActor(nn.Module):
 
 
 class ActionConditionedYCCritic(nn.Module):
-    """Centralized Q critic over the same 2502 flat YC actions.
+    """LEGACY PROTOTYPE. Disabled in the canonical model (use_action_q_critic=False).
+
+    Centralized Q critic over the same 2502 flat YC actions.
 
     It uses the full global yard state plus a full-resource YC action-feature
     observation during training.  The pair scorer is shared across all
@@ -287,12 +291,12 @@ def initialize_conservative_yc_actor(model: ResourceCooperativeModel, proactive_
 @dataclass
 class ResourcePPOConfig:
     total_steps: int = 30000
-    rollout_steps: int = 1024
+    rollout_steps: int = 512
     min_storage_transitions: int = 64
     min_yc_transitions: int = 128
     max_rollout_multiplier: int = 4
-    update_epochs: int = 5
-    minibatch_size: int = 128
+    update_epochs: int = 2
+    minibatch_size: int = 256
     gamma: float = 1.0
     gae_lambda: float = 1.0
     clip_coef: float = 0.20

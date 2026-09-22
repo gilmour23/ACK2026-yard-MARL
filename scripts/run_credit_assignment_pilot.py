@@ -24,7 +24,7 @@ def _mean_finite(rows, key):
     return float(np.mean(vals)) if vals else float('nan')
 
 
-def run(checkpoint: Path, out: Path, steps: int = 2000, train_seeds=(21,22,23), eval_seeds=range(401,411), repeats: int = 3):
+def run(checkpoint: Path, out: Path, steps: int = 2000, train_seeds=(21,22,23), eval_seeds=range(601,611), repeats: int = 3):
     checkpoint=Path(checkpoint); out=Path(out); out.mkdir(parents=True,exist_ok=True)
     results={}
     for episode_complete in (False, True):
@@ -73,7 +73,7 @@ if __name__=='__main__':
     ap.add_argument('--out',default='credit_assignment_pilot')
     ap.add_argument('--steps',type=int,default=2000)
     ap.add_argument('--train-seeds',type=int,nargs='+',default=[21,22,23])
-    ap.add_argument('--eval-start',type=int,default=401)
+    ap.add_argument('--eval-start',type=int,default=601)
     ap.add_argument('--eval-count',type=int,default=10)
     ap.add_argument('--repeats',type=int,default=3)
     a=ap.parse_args()

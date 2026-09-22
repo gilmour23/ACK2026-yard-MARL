@@ -1,176 +1,188 @@
 # CURRENT MODEL — ACK2026 항만 야드 MARL
 
-Updated: 2026-09-22
-Status: **Astra independent audit fixes applied; 30k full training remains No-Go**
+Updated: 2026-09-22  
+Status: **post-audit-fix canonical code; Astra 2k A/B re-audit pilot completed; Full 30k remains No-Go**
 
-## 1. Canonical model
+## 1. Source of truth
+
+현재 코드의 source of truth는 GitHub `main` branch이다.
+
+- Core MARL trainer: `src/train_yc_marl.py`
+- Environment: `src/yc_marl_env.py`
+- Simulator: `src/yard_simulator.py`
+- Centralized PPO baseline: `src/train_yc_single.py`
+- Evaluation: `src/evaluate_yc_policies.py`
+- Credit-assignment pilot: `scripts/run_credit_assignment_pilot.py`
+- Tests: `tests/test_v4_final.py`
+- Frozen canonical settings: `configs/v4_canonical.yaml`
+
+대형 checkpoint와 실험 산출물은 GitHub에 저장하지 않고 Google Drive master repository에 보관한다.
+
+Canonical checkpoint:
+- file: `groupnorm_12k_resource_marl_final.pt`
+- SHA-256: `2bbd3a2e795a215d3fcbd654d58fad154d4298b55bb50ce92f54ad50b82ddb59`
+
+## 2. Canonical model
 
 현재 기준모델은 **Group-normalized Flat Target×Destination PPO**이다.
 
-- Environment action space: Flat discrete
-  - Mandatory
-  - Idle
-  - Proactive(Target × Destination)
-- Maximum proactive pairs: 100 target positions × 25 destination stacks = 2,500
-- Maximum YC actions: 2,502
-- Canonical checkpoint: `checkpoints/groupnorm_12k_resource_marl_final.pt`
-- Canonical training code: `code/train_yc_marl.py`
-- Canonical evaluation code: `code/evaluate_yc_policies.py`
-- Canonical comparison code: `code/train_yc_single.py`
-- Credit-assignment pilot runner: `code/run_credit_assignment_pilot.py`
+Environment action space:
+- Mandatory
+- Idle
+- Proactive(Target × Destination)
 
-## 2. Astra independent audit findings now treated as ground truth for the next audit
+Maximum proactive pairs = 100 target positions × 25 destination stacks = 2,500.  
+Maximum YC actions = 2,502.
 
-The 2026-09-21 independent audit found:
+현재 actor는 **2-level GroupNorm**을 사용한다:
 
-1. **Training GroupNorm math/log-prob/PPO ratio was not found to contain a core mathematical error.**
-2. **The provided evaluation helper had a GroupNorm mask bug.** The YC mask was applied only after pair normalization, producing a different policy distribution.
-3. **`greedy proactive = 0%` is not a valid standalone failure metric** for the current grouped flat policy because proactive mass is spread across many pair actions.
-4. The earlier interpretation that **Destination was already well learned was too strong**. The top-ranked pair looked reasonable, but the full conditional pair distribution was nearly uniform (`normalized entropy ≈ 0.99988`).
-5. The current critic does not represent detailed Target ETA information well and its value prediction was almost constant on the audited trajectories (`MC explained variance ≈ 0.000074`).
-6. Reward integration/drain accounting and GroupNorm training log-prob checks passed the audit.
+[
+P(a)=P(Operation)P(Target,Destinationmid Proactive)
+]
 
-Original audit materials are stored under `05_ASTRA_AUDITS/20260921_independent_audit/`.
+`nested_group_normalized_flat_yc_logits()`는 legacy/unused helper이며 canonical actor가 호출하지 않는다.  
+`ActionConditionedYCCritic`도 legacy prototype compatibility를 위해 코드에 남아 있지만 canonical 설정에서는 `use_action_q_critic=False`다.
 
-## 3. Fixes already applied to canonical code
+## 3. Independent audit findings already incorporated
 
-### 3.1 Evaluation GroupNorm mask fix
+2026-09-21 Astra independent audit에서 확인된 주요 사실:
 
-`evaluate_yc_policies.py`
+1. training GroupNorm math, joint log-prob, PPO ratio에서 핵심 수학 오류는 발견되지 않았다.
+2. 기존 evaluation helper는 YC mask를 GroupNorm 내부 normalization에 전달하지 않는 오류가 있었다.
+3. flat greedy proactive=0%는 grouped flat policy 구조상 standalone failure metric으로 쓰면 안 된다.
+4. top-ranked pair가 합리적으로 보여도 full conditional pair distribution은 거의 uniform이었다.
+5. critic value는 audited trajectories에서 거의 상수였고 MC explained variance가 약 0에 가까웠다.
+6. reward integration, drain accounting, request normalization은 감사 범위에서 일치했다.
 
-- Before: `model.yc_logits(obs)` then external mask
-- Now: `model.yc_logits(obs, mask)` so the feasible mask participates in GroupNorm pair normalization.
+원본 감사 문서: `audits/ASTRA_INDEPENDENT_AUDIT_20260921.md`.
 
-### 3.2 Evaluation protocol
+## 4. Canonical fixes
 
-- Learned policies are evaluated with **stochastic sampling by default**, matching the PPO policy distribution.
-- Flat greedy remains available only as a separate diagnostic.
-- Do not use flat-greedy proactive rate as a primary learning-success metric.
+### 4.1 Evaluation mask
 
-### 3.3 Centralized Single PPO fairness fixes
+YC evaluation은 `model.yc_logits(obs, mask)`를 사용하여 feasible mask가 GroupNorm pair normalization에 들어간다.
 
-`train_yc_single.py`
+### 4.2 Evaluation protocol
 
-- uses the same Group-normalized Flat Target×Destination YC policy parameterization as MARL
-- uses the same proactive-group initialization and pair-score initialization family
-- uses structured operation + normalized pair entropy
-- passes the YC mask into GroupNorm normalization
-- minibatch permutation bug fixed: one permutation per epoch
+- PPO learned policy의 **primary evaluation은 stochastic sampling**이다.
+- `evaluate()`의 API default도 stochastic이다.
+- flat greedy는 별도 deployment/diagnostic 지표로만 사용한다.
 
-This was necessary so future MARL-vs-Single comparisons are not confounded by different action-policy parameterizations.
+### 4.3 MARL vs Single PPO fairness
 
-### 3.4 Episode-complete rollout option
+현재 두 trainer의 canonical optimization 기본값은 다음으로 통일했다.
 
-`train_yc_marl.py`
+- rollout_steps = 512
+- update_epochs = 2
+- minibatch_size = 256
+- gamma = 1.0
+- gae_lambda = 1.0
+- learning_rate = 3e-4
+- YC operation entropy coefficient = 0.001
+- normalized conditional pair entropy coefficient = 0.0001
+- proactive initial bias = -2.197224577
+- pair scorer init std = 0.05
 
-Added `ResourcePPOConfig.episode_complete_rollout`:
+Single PPO는 같은 GroupNorm action parameterization, feasible mask, structured entropy, minibatch-permutation 방식을 사용한다.
 
-- `False`: existing cutoff rollout
-- `True`: once the rollout threshold is reached, continue collecting until the current episode reaches terminal/drain, then update
+### 4.4 Episode-complete rollout option
 
-No actor architecture, reward, environment dynamics, gamma/lambda, or PPO objective was changed by this option.
+`ResourcePPOConfig.episode_complete_rollout`:
 
-### 3.5 Critic diagnostics
+- `False`: cutoff rollout
+- `True`: threshold 도달 후 현재 episode terminal/drain까지 수집한 뒤 update
 
-Each update can now log:
+Actor architecture, environment, reward, gamma/lambda는 이 switch로 바뀌지 않는다.
 
-- `rollout_mode`
-- `rollout_decisions`
-- `rollout_ended_at_terminal`
-- `mc_completed_fraction`
-- `mc_value_ev`
-- `mc_value_rmse`
+### 4.5 Checkpoint continuation semantics
 
-### 3.6 Checkpoint lineage
+새 checkpoint는 optimizer/RNG/step metadata를 **저장**하지만 현재 `init_checkpoint` load path는 이를 exact resume에 사용하지 않는다.
 
-New checkpoints include additional run/update/optimizer/RNG lineage metadata. The historical 12k checkpoint is still a weights-only warm-start source because the original full optimizer/RNG lineage was not available.
+따라서 현재 continuation semantics는 명시적으로:
 
-## 4. Verification after fixes
+> **weights-only warm start, not exact resume**
 
-- Unit/integration tests: **15 / 15 passed**
-- Episode-complete smoke test:
-  - cutoff A: 256 decisions, non-terminal, MC completed fraction 0
-  - episode-complete B: 1,188 decisions, terminal, MC completed fraction 1
-  - B critic EV remained ~0.000073, RMSE ~3.93
+이다.
 
-This smoke test validates implementation behavior only. It does **not** establish that episode-complete rollout improves policy performance.
+Historical 12k checkpoint 역시 exact optimizer/RNG lineage가 완전하게 복원되지 않는다.
 
-## 5. Partial credit-assignment pilot status
+## 5. Astra 2k A/B re-audit pilot — interim result
 
-A longer local A/B pilot was attempted after the fixes, but the available execution window was insufficient to finish the planned 2k × 3-seed comparison.
+아래 수치는 사용자가 전달한 Astra 재감사 중간 실행 로그를 기록한 것이며, **최종 감사 보고서가 아직 제공되지 않았으므로 final evidence로 확정하지 않는다.**
 
-Completed partial result:
+Training seeds:
+- 21
+- 22
+- 23
 
-### Cutoff A, training seed 21, 500 decisions
+Validation scenarios:
+- 601–610
+- stochastic evaluation
+- 총 210 evaluation episodes
 
-- rollout decisions: 500
-- Storage decisions: 64
-- YC decisions: 436
-- mean P(Proactive): ~0.1467
-- sampled proactive rate: ~0.1628
-- normalized conditional pair entropy: ~0.99991
-- operation entropy: ~0.4153
-- rollout did not end at terminal
-- MC completed fraction: 0
-- MC EV/RMSE: not computable from completed tails
+실행 범위:
+- A cutoff: seed별 약 2,059–2,127 decisions
+- B episode-complete: 약 2,137–2,301 decisions
+- B는 threshold 이후 현재 episode terminal까지 수집
+- B의 해당 rollout samples는 terminal return에 포함
 
-Do **not** use this partial result to choose A or B.
+중간 결과:
+- B는 3 seeds 모두에서 critic EV와 RMSE를 개선
+- 그러나 critic EV는 약 0.017–0.021에 머묾
+- objective J는 2 seeds에서 악화, 1 seed에서 소폭 개선
+- conditional pair distribution은 여전히 거의 uniform
+- 따라서 episode-complete는 critic training에 영향을 주지만 Target/pair credit failure를 해결했다고 볼 수 없음
+
+추가 진단:
+- critic observation에 이미 존재하는 시간 변수만 사용한 scenario-split 단순 회귀가 약 EV 0.958을 보였다는 중간 결과가 보고됨
+- 따라서 현재 critic failure를 세부 ETA feature 부족만으로 설명하기 어렵고 **critic optimization/training failure를 별도로 분리할 필요**가 있음
 
 ## 6. Current interpretation
 
-The current canonical policy should be described as:
+현재 가장 방어적인 해석:
 
-> The grouped operation probability is non-collapsed, but the conditional Target×Destination policy remains almost uniform. The strongest independently verified weakness is the critic/value representation and the handling of delayed effects across rollout cutoffs, not a proven defect in the actor probability formula or reward integration.
+> GroupNorm operation mass 자체는 붕괴하지 않았지만 conditional Target×Destination policy는 거의 균등하다. Episode-complete rollout은 value fit을 일부 개선했으나 objective와 pair learning을 일관되게 개선하지 않았다. 현재 다음 우선 가설은 actor 재설계가 아니라 critic optimization/training failure이며, fine-grained critic representation limitation과 rollout-boundary effect는 별도 요인으로 분리해 검증해야 한다.
 
-Do not describe the model as "Destination learned, Target failed" without qualification.
-
-## 7. Not canonical
-
-These remain experimental/failed branches and must not be treated as the current model:
-
-- Target/Destination representation split
-- Autoregressive Operation → Target → Destination
-- Action-conditioned Q critic prototype
-
-## 8. Fixed environment settings
+## 7. Fixed environment
 
 - Import containers only
 - 4 blocks × 25 stacks/block × 4 tiers = 400 physical slots
-- Initial containers = 268 (67%)
-- 1 fixed YC/block = 4 YCs
+- Initial containers = 268
+- 1 fixed YC/block
 - No inter-block YC redeployment
 - Operating horizon = 480 min
-- YC move time = 2 min/container move
+- YC move time = 2 min
 - Storage and Retrieval homogeneous Poisson
 - λS = λR = 20/h
 - Dynamic truck ETA
-- New inbound containers are storage-only in current episode
-- Low/Medium/High workload conditions are not used
+- New inbound is storage-only in current episode
+- no Low/Medium/High workload regimes
 
-## 9. Reward
+## 8. Reward
 
-`r_t = -ΔW_truck/N_T - ΔW_storage/N_S - 0.1·ΔT_YC_extra/N_T`
+[
+r_t=-Delta W_{truck}/N_T-Delta W_{storage}/N_S-0.1Delta T_{YC,extra}/N_T
+]
 
-No positive proactive reward, no YC BC, no heuristic top-K.
+No positive proactive reward, no YC behavior cloning, no heuristic top-K.
 
-## 10. Next audit / experiment request
+## 9. Training safety
 
-Before any 30k training, independently verify the **post-audit-fix canonical code** and then run or supervise the planned A/B credit-assignment pilot:
+Full 30k multi-seed training remains **No-Go**.
 
-- A: cutoff rollout
-- B: episode-complete rollout
-- same canonical 12k weights
-- same hyperparameters
-- training seeds 21, 22, 23
-- first checkpoint: 2k additional decisions per arm, then 4k/6k only if justified
+`scripts/run_v4_experiments.py` blocks non-quick 30k execution unless `--allow-full-30k` is explicitly supplied after an audit Go decision.
 
-Primary diagnostics:
+## 10. Next step
 
-1. on-policy MC critic explained variance and RMSE
-2. conditional pair entropy
-3. stochastic objective J
-4. Truck delay / Storage delay / extra YC work
-5. sampled proactive rate
-6. Target-randomization evaluation intervention, if useful, without modifying training
+Do **not** extend the episode-complete experiment to 4k/6k merely because EV improved.
 
-Do not reintroduce hand-crafted ETA target scores, heuristic top-K, YC BC, proactive positive reward, or workload-level experiments.
+Next work should keep the actor fixed and isolate critic training behavior:
+- value target scale/distribution
+- critic loss trajectory
+- gradient norms and joint clipping interaction
+- critic learning rate / optimizer behavior
+- minibatch coverage
+- value prediction vs MC-return calibration
+- simple-observation baselines
+
+Do not reintroduce hand-crafted ETA target scores, heuristic top-K, YC BC, proactive positive reward, or workload-level experiments before this diagnostic is resolved.

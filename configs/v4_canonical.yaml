@@ -1,0 +1,52 @@
+model_status: canonical_audit_fix
+full_30k_training: no_go
+
+checkpoint:
+  file: groupnorm_12k_resource_marl_final.pt
+  sha256: 2bbd3a2e795a215d3fcbd654d58fad154d4298b55bb50ce92f54ad50b82ddb59
+  lineage_note: "legacy 6k -> continuation -> 12k naming; exact full optimizer/RNG lineage of legacy checkpoint is not independently reconstructable"
+
+environment:
+  blocks: 4
+  stacks_per_block: 25
+  tiers: 4
+  total_slots: 400
+  initial_containers: 268
+  yc_per_block: 1
+  yc_move_time_min: 2.0
+  arrival_rate_storage_per_hour: 20.0
+  arrival_rate_retrieval_per_hour: 20.0
+  operating_horizon_min: 480
+
+ppo_checkpoint_config:
+  rollout_steps: 512
+  min_storage_transitions: 64
+  min_yc_transitions: 128
+  max_rollout_multiplier: 4
+  update_epochs: 2
+  minibatch_size: 256
+  gamma: 1.0
+  gae_lambda: 1.0
+  clip_coef: 0.2
+  storage_entropy_coef: 0.01
+  yc_operation_entropy_coef: 0.001
+  yc_pair_entropy_coef: 0.0001
+  proactive_init_bias: -2.197224577
+  yc_pair_init_std: 0.05
+  value_coef: 0.5
+  learning_rate: 0.0003
+  max_grad_norm: 0.5
+  hidden: 128
+  use_action_q_critic: false
+  seed: 15
+
+reward:
+  truck_wait_weight: 1.0
+  storage_wait_weight: 1.0
+  extra_move_weight: 0.1
+  risk_shaping_weight: 0.0
+  yc_queue_shaping_weight: 0.0
+
+experimental_switches:
+  episode_complete_rollout_default: false
+  note: "A/B pilot option only; not adopted as canonical training policy"

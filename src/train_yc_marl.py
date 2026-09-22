@@ -296,6 +296,7 @@ class ResourcePPOConfig:
     min_yc_transitions: int = 128
     max_rollout_multiplier: int = 4
     update_epochs: int = 2
+    critic_extra_epochs: int = 0  # diagnostic: value-only passes after the canonical joint PPO epochs
     minibatch_size: int = 256
     gamma: float = 1.0
     gae_lambda: float = 1.0
@@ -438,6 +439,7 @@ def train_resource_marl(config: ResourcePPOConfig, out_dir: Path, init_checkpoin
     main_params = [p for n, p in model.named_parameters() if not n.startswith("yc_q_critic.")]
     optimizer = torch.optim.Adam(main_params, lr=config.learning_rate)
     q_optimizer = torch.optim.Adam(model.yc_q_critic.parameters(), lr=config.q_learning_rate)
+    critic_extra_rng = np.random.default_rng(config.seed + 700_001)
 
     global_step = update_idx = 0
     episode_records: List[dict] = []
@@ -553,6 +555,57 @@ def train_resource_marl(config: ResourcePPOConfig, out_dir: Path, init_checkpoin
                 value=model.value(global_obs_t[mb]); v_loss=0.5*(value-ret_t[mb]).pow(2).mean()
                 loss=pg_loss+config.vf_coef*v_loss-entropy_bonus
                 optimizer.zero_grad(); loss.backward(); nn.utils.clip_grad_norm_(model.parameters(),config.max_grad_norm); optimizer.step()
+
+        # Minimal critic-budget diagnostic.  The canonical actor PPO path above is
+        # unchanged.  Extra passes reuse the same rollout/return targets and the
+        # same Adam optimizer, but compute value loss only.  With set_to_none=True,
+        # non-critic parameters have grad=None and Adam therefore leaves them and
+        # their per-parameter state untouched.  A dedicated RNG avoids consuming
+        # the actor/PPO NumPy permutation stream.
+        critic_extra_steps=0
+        critic_extra_actor_max_abs_delta=0.0
+        if config.critic_extra_epochs > 0:
+            actor_before={
+                name:p.detach().clone()
+                for name,p in model.named_parameters()
+                if name.startswith(("storage_actor.","yc_actor."))
+            }
+            for _ in range(config.critic_extra_epochs):
+                order_c=critic_extra_rng.permutation(n)
+                for start in range(0,n,config.minibatch_size):
+                    ids=order_c[start:start+config.minibatch_size]
+                    if len(ids)==0: continue
+                    mb=torch.as_tensor(ids,dtype=torch.long,device=device)
+                    value=model.value(global_obs_t[mb])
+                    v_loss=0.5*(value-ret_t[mb]).pow(2).mean()
+                    loss_v=config.vf_coef*v_loss
+                    optimizer.zero_grad(set_to_none=True)
+                    loss_v.backward()
+                    nn.utils.clip_grad_norm_(model.parameters(),config.max_grad_norm)
+                    optimizer.step()
+                    critic_extra_steps+=1
+            with torch.no_grad():
+                for name,p in model.named_parameters():
+                    if name in actor_before:
+                        critic_extra_actor_max_abs_delta=max(
+                            critic_extra_actor_max_abs_delta,
+                            float((p-actor_before[name]).abs().max().item())
+                        )
+            if critic_extra_actor_max_abs_delta != 0.0:
+                raise RuntimeError(
+                    f"Actor changed during critic-only extra epochs: "
+                    f"max_abs_delta={critic_extra_actor_max_abs_delta}"
+                )
+
+        with torch.no_grad():
+            post_v=model.value(global_obs_t).detach().cpu().numpy().astype(np.float64)
+        target_v=np.asarray(ret,dtype=np.float64)
+        target_var=float(np.var(target_v))
+        post_value_ev=float("nan") if target_var < 1e-12 else float(
+            1.0-np.var(target_v-post_v)/target_var
+        )
+        post_value_rmse=float(np.sqrt(np.mean((target_v-post_v)**2)))
+
         update_idx+=1
         update_records.append({"update":update_idx,"global_step":global_step,"storage_decisions":storage_n,"yc_decisions":yc_n,
             "mean_reward":float(np.mean(rewards)),"mean_team_reward":float(np.mean(team_buf)),
@@ -565,6 +618,9 @@ def train_resource_marl(config: ResourcePPOConfig, out_dir: Path, init_checkpoin
             "rollout_mode":"episode_complete" if config.episode_complete_rollout else "cutoff",
             "rollout_decisions":int(len(actions_buf)),"rollout_ended_at_terminal":bool(dones_buf and dones_buf[-1]>0.5),
             **mc_diag,
+            "post_update_value_ev":post_value_ev,"post_update_value_rmse":post_value_rmse,
+            "critic_extra_epochs":int(config.critic_extra_epochs),"critic_extra_steps":int(critic_extra_steps),
+            "critic_extra_actor_max_abs_delta":float(critic_extra_actor_max_abs_delta),
             "yc_q_loss":q_loss_value,"yc_q_adv_std":q_adv_std})
 
     out_dir=Path(out_dir); out_dir.mkdir(parents=True,exist_ok=True)

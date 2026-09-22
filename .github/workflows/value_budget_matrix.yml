@@ -1,0 +1,104 @@
+name: value-budget-matrix
+
+on:
+  push:
+    branches:
+      - experiment/critic-diagnostic
+    paths:
+      - '.github/workflows/value_budget_matrix.yml'
+  workflow_dispatch:
+
+jobs:
+  pilot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        arm: [control_value2, treatment_value20]
+        seed: [21, 22, 23]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Verify checkpoint SHA
+        run: echo "2bbd3a2e795a215d3fcbd654d58fad154d4298b55bb50ce92f54ad50b82ddb59  diagnostic_inputs/groupnorm_12k_resource_marl_final.pt" | sha256sum -c -
+      - name: Run one pre-registered arm/seed
+        env:
+          PYTHONPATH: src:scripts
+          OMP_NUM_THREADS: '1'
+          MKL_NUM_THREADS: '1'
+          ARM: ${{ matrix.arm }}
+          SEED: ${{ matrix.seed }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          import numpy as np
+          from train_yc_marl import ResourcePPOConfig, train_resource_marl
+          from run_value_budget_pilot import evaluate_with_critic
+
+          arm=os.environ["ARM"]
+          seed=int(os.environ["SEED"])
+          extra=0 if arm=="control_value2" else 18
+          root=Path("matrix_result")
+          run_dir=root/arm/f"seed{seed}"
+          cfg=ResourcePPOConfig(
+              total_steps=2000,
+              rollout_steps=512,
+              min_storage_transitions=64,
+              min_yc_transitions=128,
+              max_rollout_multiplier=4,
+              update_epochs=2,
+              critic_extra_epochs=extra,
+              minibatch_size=256,
+              gamma=1.0,
+              gae_lambda=1.0,
+              learning_rate=3e-4,
+              max_grad_norm=0.5,
+              seed=seed,
+              arrival_rate_per_hour=20.0,
+              episode_complete_rollout=True,
+          )
+          _,updates=train_resource_marl(
+              cfg,run_dir,Path("diagnostic_inputs/groupnorm_12k_resource_marl_final.pt")
+          )
+          if not updates:
+              raise RuntimeError("no updates")
+          if any(float(r.get("critic_extra_actor_max_abs_delta",0.0)) != 0.0 for r in updates):
+              raise RuntimeError("actor changed during critic-only epochs")
+          train={
+              "arm":arm,
+              "seed":seed,
+              "actual_decisions":int(updates[-1]["global_step"]),
+              "ppo_updates":int(len(updates)),
+              "critic_extra_steps":int(sum(int(r.get("critic_extra_steps",0)) for r in updates)),
+              "post_update_value_ev_last":float(updates[-1]["post_update_value_ev"]),
+              "post_update_value_rmse_last":float(updates[-1]["post_update_value_rmse"]),
+              "mc_value_ev_mean":float(np.nanmean([float(r["mc_value_ev"]) for r in updates])),
+              "mc_value_rmse_mean":float(np.nanmean([float(r["mc_value_rmse"]) for r in updates])),
+              "yc_pair_entropy_norm_mean":float(np.mean([float(r["yc_pair_entropy_norm"]) for r in updates])),
+              "yc_proactive_probability_mean":float(np.mean([float(r["yc_proactive_probability"]) for r in updates])),
+              "yc_sampled_proactive_rate_mean":float(np.mean([float(r["yc_sampled_proactive_rate"]) for r in updates])),
+          }
+          ev=evaluate_with_critic(
+              run_dir/"resource_marl_final.pt",
+              run_dir/"eval_701_710_stochastic.csv",
+              range(701,711),
+              3,
+          )
+          result={"training":train,"evaluation":ev}
+          root.mkdir(parents=True,exist_ok=True)
+          (root/f"result_{arm}_seed{seed}.json").write_text(json.dumps(result,indent=2,allow_nan=True))
+          PY
+      - name: Upload arm/seed artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: value-budget-${{ matrix.arm }}-seed${{ matrix.seed }}
+          path: matrix_result
+          if-no-files-found: warn
+          retention-days: 30

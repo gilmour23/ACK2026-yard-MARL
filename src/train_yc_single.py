@@ -82,8 +82,8 @@ def initialize_conservative_yc_head(model:CentralizedSingleModel, proactive_bias
 
 @dataclass
 class SinglePPOConfig:
-    total_steps:int=30000; rollout_steps:int=1024; min_storage_transitions:int=64; min_yc_transitions:int=128
-    max_rollout_multiplier:int=4; update_epochs:int=5; minibatch_size:int=128; gamma:float=1.0; gae_lambda:float=1.0
+    total_steps:int=30000; rollout_steps:int=512; min_storage_transitions:int=64; min_yc_transitions:int=128
+    max_rollout_multiplier:int=4; update_epochs:int=2; minibatch_size:int=256; gamma:float=1.0; gae_lambda:float=1.0
     clip_coef:float=0.20; ent_coef:float=0.01; yc_op_ent_coef:float=0.001; yc_pair_ent_coef:float=0.0001; yc_proactive_init_bias:float=-2.197224577; yc_pair_init_std:float=0.05
     vf_coef:float=0.5; learning_rate:float=3e-4; max_grad_norm:float=0.5; hidden:int=128; seed:int=1
     arrival_rate_per_hour:float=20.0; truck_wait_weight:float=1.0; storage_wait_weight:float=1.0; extra_move_weight:float=0.10

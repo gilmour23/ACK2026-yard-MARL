@@ -585,4 +585,7 @@ def train_resource_marl(config: ResourcePPOConfig, out_dir: Path, init_checkpoin
 
 
 if __name__ == "__main__":
-    train_resource_marl(ResourcePPOConfig(), Path("resource_marl_run"))
+    raise RuntimeError(
+        "Direct default 30k training is disabled while Full 30k remains No-Go. "
+        "Use an explicit audited runner/config after a Go decision."
+    )

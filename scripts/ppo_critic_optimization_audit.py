@@ -96,9 +96,12 @@ def main():
     for start in range(0,n,512):
         sl=slice(start,min(start+512,n));adv,ret=original_gae(buffer['reward'][sl],buffer['value'][sl],buffer['next_value'][sl],buffer['done'][sl],1.,1.)
         diff=ret-buffer['target'][sl];cuts.append(dict(start=start,count=len(ret),terminal=bool(buffer['done'][sl][-1]),target_bias_vs_full_mc=float(diff.mean()),target_rmse_vs_full_mc=float(np.sqrt(np.mean(diff**2)))))
-    dump(out/'summary.json',dict(**provenance(a.checkpoint,a.seed,n,len(rows),'canonical sampling, fixed actor during actual trainer update; no policy update'),
+    scenarios=[int(r['seed']) for r in __import__('csv').DictReader((out/'native/resource_marl_train_episodes.csv').open())]
+    prov=provenance(a.checkpoint,a.seed,n,len(rows),'canonical sampling, fixed actor during actual trainer update; no policy update')
+    prov.update(train_scenarios=scenarios,validation_scenarios=[])
+    dump(out/'summary.json',dict(**prov,
         actor_hash_before=actor_hash,actor_hash_after=state_hash(m),actor_parameter_updates=0,ppo_updates=len(updates),episodes=1,
-        scenario_seeds=[int(r['seed']) for r in __import__('csv').DictReader((out/'native/resource_marl_train_episodes.csv').open())],
+        scenario_seeds=scenarios,
         coverage=coverage_rows,cutoff_target_probe=cuts,value_target=metrics(buffer['value'],buffer['target']),
         after_value_fit=metrics(predict(m.critic,torch.tensor(buffer['obs'])),buffer['target'])))
     print(json.dumps(dict(seed=a.seed,decisions=n,critic_optimizer_steps=len(rows),actor_updates=0)),flush=True)

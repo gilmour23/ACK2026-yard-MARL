@@ -23,3 +23,7 @@ Call canonical train_resource_marl with its original loss, minibatch order, GAE 
 ## Interpretation and scope
 
 Compare A canonical online critic, B warm-start fit (and labeled fresh control), C time regression on identical held-out transitions. Distinguish exact-MC supervision, sample/optimizer exposure, initialization and joint clipping. Propose exactly one next pilot after results. Full30k remains No-Go irrespective of these diagnostic results; future reconsideration needs stable critic gains, held-out stochastic J improvement and a signal of nonuniform pair learning. No actor/reward/environment edits.
+
+## Additional measurement after initial traces
+
+Warm seed21 exceeded EV0.80 at epoch1 (98 steps), whereas the first actual PPO trace used only10 critic steps and separate clipping changed its shadow Adam delta by about1e-5 relative. Add a measurement of held-out performance at steps10/20/40/60/98, reproducing the unchanged first-epoch warm fit for each seed. This is an explicitly adaptive measurement, not a new optimizer treatment or primary endpoint change. Verify its step98 EV against the original first-epoch record. Primary last-epoch results remain unchanged.

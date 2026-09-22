@@ -12,7 +12,8 @@ def main():
         p=old/item['path'];assert p.exists() and p.stat().st_size==item['bytes'] and sha(p)==item['sha256'],p
         checked.append(item['path'])
     dump(out/'old_artifact_integrity.json',dict(checked=len(checked),paths=checked,manifest_sha256=sha(old/'OUTPUT_MANIFEST.json')))
-    d,eps,seeds,train=load_data(old);x=torch.tensor(d['obs']);m=model_from_checkpoint(a.checkpoint);h=state_hash(m);p=predict(m.critic,x)
+    d,eps,seeds,train=load_data(old);d={k:d[k] for k in d.files}
+    x=torch.tensor(d['obs']);m=model_from_checkpoint(a.checkpoint);h=state_hash(m);p=predict(m.critic,x)
     # Batched and single inference may differ by a few fp32 ULPs.
     assert np.max(abs(p-d['values']))<1e-4
     design=np.column_stack([np.ones(len(x)),d['obs'][:,2]])

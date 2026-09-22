@@ -234,6 +234,8 @@ def test_canonical_ppo_defaults_and_stochastic_evaluation_default():
         assert cfg.rollout_steps == 512
         assert cfg.update_epochs == 2
         assert cfg.minibatch_size == 256
+        if hasattr(cfg, 'critic_extra_epochs'):
+            assert cfg.critic_extra_epochs == 0
         assert np.isclose(cfg.gamma, 1.0)
         assert np.isclose(cfg.gae_lambda, 1.0)
         assert np.isclose(cfg.learning_rate, 3e-4)

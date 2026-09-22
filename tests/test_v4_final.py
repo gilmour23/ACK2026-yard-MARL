@@ -12,8 +12,9 @@ from train_yc_marl import (
     ResourceCooperativeModel, ResourcePPOConfig, initialize_conservative_yc_actor,
     masked_distribution, structured_yc_entropy,
 )
-from train_yc_single import CentralizedSingleModel
+from train_yc_single import CentralizedSingleModel, SinglePPOConfig
 from validate_yc_marl import heuristic_action
+from evaluate_yc_policies import evaluate
 
 
 def test_v4_fixed_dimensions_and_actions():
@@ -223,3 +224,17 @@ def test_completed_mc_diagnostics_distinguishes_cutoff_tail():
     d=completed_episode_mc_diagnostics(rewards,dones,values)
     assert d['mc_n']==2
     assert np.isclose(d['mc_completed_fraction'],0.5)
+
+
+def test_canonical_ppo_defaults_and_stochastic_evaluation_default():
+    import inspect
+    marl = ResourcePPOConfig()
+    single = SinglePPOConfig()
+    for cfg in (marl, single):
+        assert cfg.rollout_steps == 512
+        assert cfg.update_epochs == 2
+        assert cfg.minibatch_size == 256
+        assert np.isclose(cfg.gamma, 1.0)
+        assert np.isclose(cfg.gae_lambda, 1.0)
+        assert np.isclose(cfg.learning_rate, 3e-4)
+    assert inspect.signature(evaluate).parameters['stochastic'].default is True

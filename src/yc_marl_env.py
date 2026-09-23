@@ -15,7 +15,9 @@ Key design choices
 * Storage Agent selects one of 100 stacks.
 * Shared YC policy selects Mandatory, Idle (only when speculative work is the
   only alternative), or a flat proactive (Target x Destination) relocation.
-* Proactive target and relocation destination are both learned actions.
+* Canonical mode learns proactive target and relocation destination jointly.
+* Diagnostic rule-resolved mode can restrict proactive support to one transparent
+  ETA/blocker-priority target plus information-aware relocation destination.
 * Capacity slack is an observation only, never a hard action mask.
 * Reward is normalized to mean delay / retrieval-normalized extra YC minutes.
 """
@@ -107,6 +109,7 @@ class ResourceMarlSimulator(YardSimulator):
         proactive_horizon: float = PROACTIVE_HORIZON_MIN,
         operating_horizon: float = OPERATING_HORIZON_MIN,
         enable_proactive: bool = True,
+        rule_resolve_proactive_pair: bool = False,
         **kwargs,
     ):
         # Keep three physical slots per block unavailable to new storage so a
@@ -118,6 +121,7 @@ class ResourceMarlSimulator(YardSimulator):
         self.proactive_horizon = float(proactive_horizon)
         self.operating_horizon = float(operating_horizon)
         self.enable_proactive = bool(enable_proactive)
+        self.rule_resolve_proactive_pair = bool(rule_resolve_proactive_pair)
         self.operating_closed = False
 
         self.pending_decision: Optional[ResourceDecision] = None
@@ -498,6 +502,31 @@ class ResourceMarlSimulator(YardSimulator):
                 actions.append(encode_proactive_action(target_pos, dest))
         return actions
 
+    def rule_resolved_proactive_action(self, block: int) -> Optional[int]:
+        """Resolve one transparent proactive move for operation-only control.
+
+        Target priority is the existing ETA/blocker/ETA-advance ordering used by
+        proactive_candidates().  The moved object is the current top blocker of
+        that target.  Destination is selected by the existing information-aware
+        relocation heuristic.  This helper changes action support only; it does
+        not alter task duration, reward, or simulator transitions.
+        """
+        candidates = self.proactive_candidates(block)
+        if not candidates:
+            return None
+        cid = candidates[0]
+        c = self.containers[cid]
+        if c.stack is None:
+            return None
+        source_stack = c.stack
+        moving_id = self.yard.top(block, source_stack)
+        if moving_id is None or moving_id == cid:
+            return None
+        dest_stack = self.policy.choose_relocation_destination(
+            self, moving_id, block, source_stack
+        )
+        return encode_proactive_action(self._target_position(cid), dest_stack)
+
     def yc_action_mask(self, block: int) -> np.ndarray:
         mask = np.zeros(YC_ACTION_DIM, dtype=np.bool_)
         if self.ycs[block].busy:
@@ -507,7 +536,11 @@ class ResourceMarlSimulator(YardSimulator):
         if mandatory is not None:
             mask[YC_MANDATORY] = True
 
-        proactive_actions = self.proactive_pair_actions(block)
+        if self.rule_resolve_proactive_pair:
+            resolved = self.rule_resolved_proactive_action(block)
+            proactive_actions = [] if resolved is None else [resolved]
+        else:
+            proactive_actions = self.proactive_pair_actions(block)
         for a in proactive_actions:
             mask[a] = True
 
@@ -840,6 +873,7 @@ def build_resource_marl_scenario(
     operating_horizon: float = OPERATING_HORIZON_MIN,
     enable_proactive: bool = True,
     move_time: float = YC_MOVE_TIME_MIN,
+    rule_resolve_proactive_pair: bool = False,
 ) -> ResourceMarlSimulator:
     if n_blocks != N_BLOCKS or stacks_per_block != STACKS_PER_BLOCK or max_tier != MAX_TIER:
         raise ValueError("V4 final environment uses fixed 4 blocks x 25 stacks x 4 tiers")
@@ -854,6 +888,7 @@ def build_resource_marl_scenario(
         enable_proactive=enable_proactive,
         move_time=move_time,
         operating_horizon=operating_horizon,
+        rule_resolve_proactive_pair=rule_resolve_proactive_pair,
     )
     sim.arrival_rate_per_hour = float(arrival_rate_per_hour)
     rng = random.Random(seed)
@@ -952,6 +987,7 @@ class ResourceMARLYardEnv:
         yc_queue_shaping_weight: float = 0.0,
         enable_proactive: bool = True,
         yc_move_time: float = YC_MOVE_TIME_MIN,
+        rule_resolve_proactive_pair: bool = False,
     ):
         self.seed = int(seed)
         self.arrival_rate_per_hour = float(arrival_rate_per_hour)
@@ -963,6 +999,7 @@ class ResourceMARLYardEnv:
         self.yc_queue_shaping_weight = float(yc_queue_shaping_weight)
         self.enable_proactive = bool(enable_proactive)
         self.yc_move_time = float(yc_move_time)
+        self.rule_resolve_proactive_pair = bool(rule_resolve_proactive_pair)
 
         self.n_blocks = N_BLOCKS
         self.stacks_per_block = STACKS_PER_BLOCK
@@ -1008,6 +1045,7 @@ class ResourceMARLYardEnv:
             arrival_rate_per_hour=self.arrival_rate_per_hour,
             enable_proactive=self.enable_proactive,
             move_time=self.yc_move_time,
+            rule_resolve_proactive_pair=self.rule_resolve_proactive_pair,
         )
         self._episode_return = 0.0
         self._decision_count = 0

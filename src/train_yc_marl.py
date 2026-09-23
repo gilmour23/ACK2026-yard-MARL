@@ -325,6 +325,7 @@ class ResourcePPOConfig:
     enable_proactive: bool = True
     yc_move_time: float = 2.0
     episode_complete_rollout: bool = False
+    rule_resolve_proactive_pair: bool = False  # diagnostic action-support simplification
 
 
 class ScenarioSampler:
@@ -423,6 +424,7 @@ def train_resource_marl(config: ResourcePPOConfig, out_dir: Path, init_checkpoin
         extra_move_weight=config.extra_move_weight, risk_shaping_weight=config.risk_shaping_weight,
         yc_queue_shaping_weight=config.yc_queue_shaping_weight,
         enable_proactive=config.enable_proactive, yc_move_time=config.yc_move_time,
+        rule_resolve_proactive_pair=config.rule_resolve_proactive_pair,
     )
     env.reset()
     model = ResourceCooperativeModel(env.global_obs_dim, env.storage_obs_dim, env.yc_obs_dim, hidden=config.hidden).to(device)

@@ -2,9 +2,26 @@
 
 Status: **critic mechanism PASS; policy/pair gates FAIL; Full 30k remains No-Go.**
 
+## Exact execution provenance
+
+The pilot was reproduced from the exact GitHub branch code by GitHub Actions.
+
+- Repository: `gilmour23/ACK2026-yard-MARL`
+- Branch: `experiment/critic-diagnostic`
+- Execution commit: `2d65d5e67ad02bea8dd480d0607fc7cd9f6acf0b`
+- Workflow run: `35777547765`
+- Workflow result: **success**
+- Artifact: `value-budget-pilot-20260923`
+- Artifact ID: `10717004897`
+- Artifact size: 27,278,618 bytes
+- Artifact ZIP SHA-256 reported by GitHub Actions: `1b2d3ad5a2265c3c18cc115f795af6c26635eebd511a0373c1e0f939cc763679`
+- Canonical checkpoint SHA-256: `2bbd3a2e795a215d3fcbd654d58fad154d4298b55bb50ce92f54ad50b82ddb59`
+- `OMP_NUM_THREADS=1`, `MKL_NUM_THREADS=1`
+
+The exact GitHub Actions artifact reproduces the same numerical results as the independent local run.
+
 ## Protocol
 
-- Canonical checkpoint SHA-256: `2bbd3a2e795a215d3fcbd654d58fad154d4298b55bb50ce92f54ad50b82ddb59`
 - Training seeds: 21, 22, 23
 - Validation scenarios: 701–710
 - Evaluation: stochastic, 3 repeats/scenario
@@ -47,17 +64,33 @@ Treatment conditional-pair TV(uniform):
 
 Treatment normalized pair entropy remains about 0.9999. The pre-registered TV>=0.05 gate fails in all three seeds.
 
-A separate shared 500-state diagnostic also found expected Target ETA lead, destination height, and destination inversion to be extremely close to the uniform-feasible-pair baseline.
+The exact workflow artifact also reports expected Target ETA lead, destination height, and destination inversion extremely close to the uniform-feasible-pair baseline. For treatment, expected ETA minus uniform is only +0.0166, +0.0590, and -0.0675 minutes for seeds 21–23.
 
 ## Interpretation
 
 Increasing critic update exposure fixes the coarse value-function underfitting mechanism, but it does **not** make the Target×Destination actor learn a useful non-uniform pair policy within the 2k pilot. Critic undertraining was real, but it was not the sole cause of pair-credit failure.
 
-Do not increase critic epochs further as the next main intervention. The next diagnostic should keep value20 and the existing actor/critic/reward/environment fixed, and instrument the actor pair-learning signal: proactive-sample advantage distribution, pair-scorer vs operation-head gradient norms, conditional-pair KL/probability movement, pair-logit spread, and relation to realized terminal-complete return.
+Do not increase critic epochs further as the next main intervention.
 
-## Provenance caveat
+## Next minimal diagnostic
 
-The local execution copy used for this pilot had byte-identical `yc_marl_env.py`, `v4_networks.py`, and `evaluate_yc_policies.py` relative to the branch blobs, and mirrored the branch's value-budget modification in `train_yc_marl.py`. The private GitHub connector did not provide a direct repository-to-runtime materialization path, so the trainer file used locally was reconstructed rather than byte-for-byte materialized. The exact branch code passed CI. Before promotion to `main`, Astra should independently spot-check or rerun the pilot from this branch.
+Keep value20 and the existing actor/critic/reward/environment fixed. Instrument only the actor pair-learning signal during PPO:
 
-Large checkpoints and result artifacts are stored in Google Drive under:
+- proactive-sample advantage distribution;
+- advantage versus chosen target/destination features;
+- pair-scorer gradient norm versus operation-head gradient norm;
+- pair-logit standard-deviation change per update;
+- conditional-pair KL / TV movement per update;
+- correlation between pair-score update direction and realized terminal-complete MC return.
+
+Do this before changing actor epochs, entropy, architecture, reward, heuristic top-K, ETA bonus, YC BC, or Q critic.
+
+## Full 30k
+
+**No-Go.** The critic gate passes, but both the policy-objective gate and pair-learning gate fail.
+
+## Artifacts
+
+Large checkpoints and exact workflow artifacts are stored in Google Drive under:
+
 `05_ASTRA_AUDITS/20260923_value_budget_pilot/`.

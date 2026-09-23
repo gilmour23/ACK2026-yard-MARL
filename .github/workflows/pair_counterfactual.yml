@@ -1,0 +1,44 @@
+name: pair-counterfactual-diagnostic
+
+on:
+  push:
+    branches:
+      - experiment/critic-diagnostic
+    paths:
+      - '.github/workflows/pair_counterfactual.yml'
+  workflow_dispatch:
+
+jobs:
+  diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Verify checkpoint SHA
+        run: echo "2bbd3a2e795a215d3fcbd654d58fad154d4298b55bb50ce92f54ad50b82ddb59  diagnostic_inputs/groupnorm_12k_resource_marl_final.pt" | sha256sum -c -
+      - name: Run counterfactual pair diagnostic
+        env:
+          PYTHONPATH: src:scripts
+          OMP_NUM_THREADS: '1'
+          MKL_NUM_THREADS: '1'
+        run: |
+          python scripts/pair_counterfactual_diagnostic.py \
+            --checkpoint diagnostic_inputs/groupnorm_12k_resource_marl_final.pt \
+            --out pair_counterfactual \
+            --scenarios 801 802 803 804 \
+            --states-per-scenario 3 \
+            --min-state-gap 80 \
+            --random-pairs 10 \
+            --repeats 2
+      - name: Upload diagnostic artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pair-counterfactual-20260924
+          path: pair_counterfactual
+          if-no-files-found: warn
+          retention-days: 30

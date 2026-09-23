@@ -1,0 +1,46 @@
+name: final-matrix-fairness-smoke
+
+on:
+  push:
+    branches:
+      - experiment/critic-diagnostic
+    paths:
+      - '.github/workflows/final_matrix_fairness_smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        arm: [proposed_marl, marl_noresource, single_rule]
+        seed: [41, 42]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Run fairness smoke arm
+        env:
+          PYTHONPATH: src:scripts
+          OMP_NUM_THREADS: '1'
+          MKL_NUM_THREADS: '1'
+          ARM: ${{ matrix.arm }}
+          SEED: ${{ matrix.seed }}
+        run: |
+          python scripts/run_final_matrix_fairness_smoke.py \
+            --out fairness_smoke/$ARM/seed$SEED \
+            --arm $ARM \
+            --seed $SEED
+      - name: Upload smoke artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fairness-smoke-${{ matrix.arm }}-seed${{ matrix.seed }}
+          path: fairness_smoke
+          if-no-files-found: warn
+          retention-days: 30

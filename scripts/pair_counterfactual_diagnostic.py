@@ -1,30 +1,30 @@
 """Counterfactual Target×Destination action-sensitivity diagnostic.
 
-No training is performed.  The canonical actor is frozen.  At sampled YC states
+No training is performed. The canonical actor is frozen. At sampled YC states
 with feasible proactive pairs, the environment is deep-copied and several
-feasible Target×Destination actions are forced one at a time.  Each branch then
-continues to terminal under the same frozen stochastic policy and common policy
-random-number stream.
+feasible Target×Destination actions are forced one at a time. Each branch then
+continues to terminal under either the same frozen stochastic policy or the
+deterministic information-aware heuristic.
 
 Purpose: measure whether different proactive pairs have enough within-state
 return separation to be learnable, and whether the current actor score aligns
 with that action-specific return variation.
 
 The sampled candidate set is not exhaustive; reported return spread is therefore
-a lower-bound style diagnostic for the full feasible action set.
+a sampled lower-bound style diagnostic for the full feasible action set.
 """
 from __future__ import annotations
 
 import argparse
 import copy
 import json
-import math
 from pathlib import Path
 
 import numpy as np
 import torch
 
 from train_yc_marl import ResourceCooperativeModel, masked_distribution
+from validate_yc_marl import heuristic_action
 from yc_marl_env import ResourceMARLYardEnv, STORAGE_AGENT, YC_PROACTIVE_BASE
 
 torch.set_num_threads(1)
@@ -106,14 +106,13 @@ def choose_candidates(rec, n_random, seed):
     if len(pool):
         take=min(int(n_random),len(pool))
         chosen.extend(map(int,rng.choice(pool,size=take,replace=False)))
-    # Stable de-duplication.
     out=[]
     for x in chosen:
         if x not in out: out.append(x)
     return out
 
 
-def continue_branch(snapshot, model, forced_action, policy_seed):
+def continue_branch(snapshot, model, forced_action, policy_seed, continuation):
     env=copy.deepcopy(snapshot)
     rng=torch.Generator(device="cpu").manual_seed(int(policy_seed))
     future_return=0.0
@@ -121,7 +120,10 @@ def continue_branch(snapshot, model, forced_action, policy_seed):
     _,reward,done,_,info=env.step(int(forced_action))
     future_return += float(reward); decisions += 1
     while not done and decisions<100000:
-        action=policy_action(env,model,rng)
+        if continuation=="heuristic":
+            action=heuristic_action(env)
+        else:
+            action=policy_action(env,model,rng)
         _,reward,done,_,info=env.step(action)
         future_return += float(reward); decisions += 1
     if not done:
@@ -149,6 +151,7 @@ def main():
     ap.add_argument("--min-state-gap",type=int,default=80)
     ap.add_argument("--random-pairs",type=int,default=10)
     ap.add_argument("--repeats",type=int,default=2)
+    ap.add_argument("--continuation",choices=["actor","heuristic"],default="actor")
     args=ap.parse_args()
 
     out=Path(args.out); out.mkdir(parents=True,exist_ok=True)
@@ -163,10 +166,9 @@ def main():
         while not done and steps<100000 and found<args.states_per_scenario:
             rec=pair_state_record(env,model)
             if rec is not None and steps-last_probe>=args.min_state_gap:
-                snapshot=copy.deepcopy(env)
                 probes.append(dict(
                     scenario=int(scenario), state_index=int(found), decision_index=int(steps),
-                    snapshot=snapshot, rec=rec,
+                    snapshot=copy.deepcopy(env), rec=rec,
                 ))
                 last_probe=steps; found+=1
             action=policy_action(env,model,collect_rng)
@@ -185,7 +187,7 @@ def main():
             vals=[]
             for rep in range(args.repeats):
                 common_seed=p["scenario"]*1_000_000+p["state_index"]*10_000+rep
-                vals.append(continue_branch(p["snapshot"],model,action,common_seed))
+                vals.append(continue_branch(p["snapshot"],model,action,common_seed,args.continuation))
             mean_return=float(np.mean([v["future_return"] for v in vals]))
             mean_obj=float(np.mean([v["final_objective"] for v in vals]))
             feat=np.asarray(rec["pair_features"][local_idx],dtype=np.float64)
@@ -223,7 +225,6 @@ def main():
             top_actor_pair_index=int(per_candidate[top_i]["local_pair_index"]),
         ))
 
-    # Within-state centered pooled correlations remove the dominant state/time level.
     ret_center=[]; score_center=[]; prob_center=[]
     feat_center={n:[] for n in FEATURE_NAMES}
     for s in state_rows:
@@ -241,6 +242,7 @@ def main():
     summary=dict(
         checkpoint=str(args.checkpoint),
         scenarios=list(map(int,args.scenarios)),
+        continuation=args.continuation,
         probe_states=len(state_rows),
         states_per_scenario=args.states_per_scenario,
         random_pairs=args.random_pairs,
@@ -262,7 +264,6 @@ def main():
         note="Candidate set is sampled, not exhaustive; return-range estimates do not upper-bound full feasible-pair sensitivity.",
     )
 
-    # Strip non-serializable snapshots before writing.
     dump(out/"summary.json",summary)
     dump(out/"states.json",state_rows)
     dump(out/"candidates.json",candidate_rows)

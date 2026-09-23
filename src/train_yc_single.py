@@ -12,7 +12,8 @@ import torch
 from torch import nn
 
 from v4_networks import SymmetricYardEncoder, PermutationInvariantCritic, mlp
-from train_yc_marl import (ScenarioSampler, compute_gae, masked_distribution, rollout_ready, set_global_seeds,
+from train_yc_marl import (ScenarioSampler, compute_gae, completed_episode_mc_diagnostics,
+    masked_distribution, rollout_ready, set_global_seeds,
     group_normalized_flat_yc_logits, structured_yc_entropy, load_compatible_state_dict)
 from yc_marl_env import (
     N_BLOCKS, STACKS_PER_BLOCK, YC_ACTION_DIM, YC_PAIR_COUNT, YC_PROACTIVE_BASE,
@@ -83,11 +84,12 @@ def initialize_conservative_yc_head(model:CentralizedSingleModel, proactive_bias
 @dataclass
 class SinglePPOConfig:
     total_steps:int=30000; rollout_steps:int=512; min_storage_transitions:int=64; min_yc_transitions:int=128
-    max_rollout_multiplier:int=4; update_epochs:int=2; minibatch_size:int=256; gamma:float=1.0; gae_lambda:float=1.0
+    max_rollout_multiplier:int=4; update_epochs:int=2; critic_extra_epochs:int=0; minibatch_size:int=256; gamma:float=1.0; gae_lambda:float=1.0
     clip_coef:float=0.20; ent_coef:float=0.01; yc_op_ent_coef:float=0.001; yc_pair_ent_coef:float=0.0001; yc_proactive_init_bias:float=-2.197224577; yc_pair_init_std:float=0.05
     vf_coef:float=0.5; learning_rate:float=3e-4; max_grad_norm:float=0.5; hidden:int=128; seed:int=1
     arrival_rate_per_hour:float=20.0; truck_wait_weight:float=1.0; storage_wait_weight:float=1.0; extra_move_weight:float=0.10
     risk_shaping_weight:float=0.0; yc_queue_shaping_weight:float=0.0; enable_proactive:bool=True; yc_move_time:float=2.0
+    episode_complete_rollout:bool=False; rule_resolve_proactive_pair:bool=False
 
 
 def _write_csv(path:Path,rows:List[dict])->None:
@@ -102,7 +104,8 @@ def train_single_ppo(config:SinglePPOConfig,out_dir:Path,init_checkpoint:Optiona
     env=ResourceMARLYardEnv(seed=sampler.next(),arrival_rate_per_hour=config.arrival_rate_per_hour,
         truck_wait_weight=config.truck_wait_weight,storage_wait_weight=config.storage_wait_weight,extra_move_weight=config.extra_move_weight,
         risk_shaping_weight=config.risk_shaping_weight,yc_queue_shaping_weight=config.yc_queue_shaping_weight,
-        enable_proactive=config.enable_proactive,yc_move_time=config.yc_move_time)
+        enable_proactive=config.enable_proactive,yc_move_time=config.yc_move_time,
+        rule_resolve_proactive_pair=config.rule_resolve_proactive_pair)
     env.reset(); model=CentralizedSingleModel(env.global_obs_dim,env.yc_obs_dim,hidden=config.hidden).to(device)
     if init_checkpoint is not None:
         ck=torch.load(Path(init_checkpoint),map_location=device,weights_only=False); state=ck.get('state_dict',ck)
@@ -112,11 +115,15 @@ def train_single_ppo(config:SinglePPOConfig,out_dir:Path,init_checkpoint:Optiona
         if bool(ck.get('storage_only',False)): initialize_conservative_yc_head(model,config.yc_proactive_init_bias,config.yc_pair_init_std)
     else: initialize_conservative_yc_head(model,config.yc_proactive_init_bias,config.yc_pair_init_std)
     opt=torch.optim.Adam(model.parameters(),lr=config.learning_rate)
+    critic_extra_rng=np.random.default_rng(config.seed+700_001)
     global_step=update_idx=0; episodes=[]; updates=[]
     while global_step<config.total_steps:
         actor_buf=[]; critic_buf=[]; masks_buf=[]; roles=[]; actions=[]; oldlog=[]; rewards=[]; dones=[]; values=[]; nextvals=[]; teams=[]
         storage_n=yc_n=0; remaining=max(config.total_steps-global_step,1); base=min(config.rollout_steps,remaining); max_n=max(base,config.rollout_steps*config.max_rollout_multiplier)
-        while not rollout_ready(len(actions),storage_n,yc_n,base,max_n,config):
+        rollout_target_reached=False
+        while True:
+            if (not config.episode_complete_rollout) and rollout_ready(len(actions),storage_n,yc_n,base,max_n,config):
+                break
             active=env.active_agent(); role=0 if active==STORAGE_AGENT else 1
             if role==1 and not active.startswith(YC_AGENT_PREFIX): raise RuntimeError(active)
             aobs=env.centralized_actor_observation(); gobs=env.critic_observation(); mask=env.action_mask()
@@ -127,9 +134,15 @@ def train_single_ppo(config:SinglePPOConfig,out_dir:Path,init_checkpoint:Optiona
             with torch.no_grad(): nv=0.0 if done else float(model.value(torch.as_tensor(env.critic_observation(),dtype=torch.float32)).item())
             actor_buf.append(aobs.copy());critic_buf.append(gobs.copy());masks_buf.append(mask.copy());roles.append(role);actions.append(int(act.item()));oldlog.append(float(lp.item()));rewards.append(float(rew));dones.append(float(done));values.append(float(val.item()));nextvals.append(nv);teams.append(float(info['reward_components']['team']))
             storage_n+=int(role==0);yc_n+=int(role==1);global_step+=1
+            if config.episode_complete_rollout and rollout_ready(len(actions),storage_n,yc_n,base,max_n,config):
+                rollout_target_reached=True
             if done:
-                episodes.append({'global_step':global_step,'seed':env.seed,'arrival_rate_per_hour':env.arrival_rate_per_hour,'episode_return':info['episode_return'],**info['kpis']});env.reset(seed=sampler.next())
+                episodes.append({'global_step':global_step,'seed':env.seed,'arrival_rate_per_hour':env.arrival_rate_per_hour,'episode_return':info['episode_return'],**info['kpis']})
+                env.reset(seed=sampler.next())
+                if config.episode_complete_rollout and rollout_target_reached:
+                    break
         rewards_np=np.asarray(rewards,np.float32); vals=np.asarray(values,np.float32); nvals=np.asarray(nextvals,np.float32); dn=np.asarray(dones,np.float32)
+        mc_diag=completed_episode_mc_diagnostics(rewards_np,dn,vals)
         adv,ret=compute_gae(rewards_np,vals,nvals,dn,config.gamma,config.gae_lambda);adv=(adv-adv.mean())/(adv.std()+1e-8)
         actions_t=torch.as_tensor(actions,dtype=torch.long);old_t=torch.as_tensor(oldlog,dtype=torch.float32);adv_t=torch.as_tensor(adv);ret_t=torch.as_tensor(ret);critic_t=torch.as_tensor(np.asarray(critic_buf),dtype=torch.float32)
         n=len(actions)
@@ -152,7 +165,48 @@ def train_single_ppo(config:SinglePPOConfig,out_dir:Path,init_checkpoint:Optiona
                         ent.append(config.yc_op_ent_coef*op_h.mean()+config.yc_pair_ent_coef*pair_h.mean())
                 mb=torch.as_tensor(ids,dtype=torch.long);v=model.value(critic_t[mb]);vl=.5*(v-ret_t[mb]).pow(2).mean();loss=torch.stack(pg).mean()+config.vf_coef*vl-torch.stack(ent).mean()
                 opt.zero_grad();loss.backward();nn.utils.clip_grad_norm_(model.parameters(),config.max_grad_norm);opt.step()
-        update_idx+=1;updates.append({'update':update_idx,'global_step':global_step,'storage_decisions':storage_n,'yc_decisions':yc_n,'mean_reward':float(np.mean(rewards_np)),'mean_team_reward':float(np.mean(teams))})
+
+        critic_extra_steps=0
+        critic_extra_actor_max_abs_delta=0.0
+        if config.critic_extra_epochs>0:
+            actor_before={
+                name:p.detach().clone()
+                for name,p in model.named_parameters()
+                if not name.startswith('critic.')
+            }
+            for _ in range(config.critic_extra_epochs):
+                order_c=critic_extra_rng.permutation(n)
+                for st in range(0,n,config.minibatch_size):
+                    ids=order_c[st:st+config.minibatch_size]
+                    if len(ids)==0: continue
+                    mb=torch.as_tensor(ids,dtype=torch.long)
+                    v=model.value(critic_t[mb]);vl=.5*(v-ret_t[mb]).pow(2).mean()
+                    opt.zero_grad(set_to_none=True);(config.vf_coef*vl).backward()
+                    nn.utils.clip_grad_norm_(model.parameters(),config.max_grad_norm);opt.step();critic_extra_steps+=1
+            with torch.no_grad():
+                for name,p in model.named_parameters():
+                    if name in actor_before:
+                        critic_extra_actor_max_abs_delta=max(
+                            critic_extra_actor_max_abs_delta,
+                            float((p-actor_before[name]).abs().max().item())
+                        )
+
+        with torch.no_grad():
+            post_pred=model.value(critic_t).cpu().numpy().astype(np.float64)
+        y=np.asarray(ret,dtype=np.float64);err=post_pred-y;var=float(np.var(y))
+        post_ev=float('nan') if var<1e-12 else float(1.0-np.var(err)/var)
+        post_rmse=float(np.sqrt(np.mean(err*err)))
+
+        update_idx+=1;updates.append({
+            'update':update_idx,'global_step':global_step,'storage_decisions':storage_n,'yc_decisions':yc_n,
+            'mean_reward':float(np.mean(rewards_np)),'mean_team_reward':float(np.mean(teams)),
+            'rollout_decisions':int(n),'rollout_ended_at_terminal':bool(dn[-1]>0.5),
+            'mc_completed_fraction':float(mc_diag['mc_completed_fraction']),
+            'mc_value_ev':float(mc_diag['mc_value_ev']),'mc_value_rmse':float(mc_diag['mc_value_rmse']),
+            'critic_extra_steps':int(critic_extra_steps),
+            'critic_extra_actor_max_abs_delta':float(critic_extra_actor_max_abs_delta),
+            'post_update_value_ev':post_ev,'post_update_value_rmse':post_rmse,
+        })
     out_dir=Path(out_dir);out_dir.mkdir(parents=True,exist_ok=True)
     torch.save({'state_dict':model.state_dict(),'config':asdict(config),'global_obs_dim':env.global_obs_dim,'yc_obs_dim':env.yc_obs_dim,'storage_only':False,
         'init_checkpoint':str(init_checkpoint) if init_checkpoint is not None else None,

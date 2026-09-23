@@ -65,7 +65,7 @@ Final scenarios: **901–930**.
 
 - Learned policies: 3 stochastic repeats per scenario and training seed.
 - Heuristic: deterministic once per scenario.
-- Policy seed for learned evaluation: deterministic function of scenario, repeat, and training seed.
+- Policy seed for learned evaluation: `scenario*100 + repeat`, shared across training-seed models as common random numbers.
 - Scenarios 901–930 must not be used for model selection, hyperparameter changes, or rerunning a failed design.
 - After these results are opened, changes create a new study/version rather than replacing this final test.
 

@@ -240,3 +240,30 @@ def test_canonical_ppo_defaults_and_stochastic_evaluation_default():
         assert np.isclose(cfg.gae_lambda, 1.0)
         assert np.isclose(cfg.learning_rate, 3e-4)
     assert inspect.signature(evaluate).parameters['stochastic'].default is True
+
+
+def test_rule_resolved_support_exposes_at_most_one_proactive_pair():
+    env=ResourceMARLYardEnv(seed=20260924,arrival_rate_per_hour=20.0,rule_resolve_proactive_pair=True)
+    env.reset()
+    done=False; seen_yc=0
+    for _ in range(4000):
+        if env.active_agent()!='storage':
+            mask=env.action_mask()
+            assert int(mask[YC_PROACTIVE_BASE:].sum()) <= 1
+            seen_yc += 1
+        action=heuristic_action(env)
+        _,_,done,_,_=env.step(action)
+        if done: break
+    assert seen_yc > 0
+
+
+def test_single_config_supports_episode_complete_value20_and_rule_resolver():
+    cfg=SinglePPOConfig(
+        total_steps=512,
+        critic_extra_epochs=18,
+        episode_complete_rollout=True,
+        rule_resolve_proactive_pair=True,
+    )
+    assert cfg.critic_extra_epochs==18
+    assert cfg.episode_complete_rollout is True
+    assert cfg.rule_resolve_proactive_pair is True

@@ -267,3 +267,28 @@ def test_single_config_supports_episode_complete_value20_and_rule_resolver():
     assert cfg.critic_extra_epochs==18
     assert cfg.episode_complete_rollout is True
     assert cfg.rule_resolve_proactive_pair is True
+
+
+def test_final_bc_rng_seed_controls_torch_initialization(monkeypatch, tmp_path):
+    import pretrain_yc_bc as bc
+
+    env=ResourceMARLYardEnv(seed=1,arrival_rate_per_hour=20.0)
+    env.reset()
+    local=np.zeros(env.storage_obs_dim,dtype=np.float32)
+    global_obs=np.zeros(env.global_obs_dim,dtype=np.float32)
+    mask=np.ones(env.storage_action_dim,dtype=np.bool_)
+    tiny=bc.StorageDataset(
+        local_obs=[local],
+        global_obs=[global_obs],
+        masks=[mask],
+        actions=[0],
+    )
+    monkeypatch.setattr(bc,"collect_storage_dataset",lambda **kwargs: tiny)
+
+    p1=tmp_path/"a.pt";p2=tmp_path/"b.pt"
+    bc.train_bc("marl",p1,seeds=1,epochs=0,seed=20260924,hidden=16)
+    bc.train_bc("marl",p2,seeds=1,epochs=0,seed=20260924,hidden=16)
+    s1=torch.load(p1,map_location="cpu",weights_only=False)["state_dict"]
+    s2=torch.load(p2,map_location="cpu",weights_only=False)["state_dict"]
+    assert s1.keys()==s2.keys()
+    assert all(torch.equal(s1[k],s2[k]) for k in s1)

@@ -8,6 +8,10 @@ on:
       - 'configs/final_experiment_20260924.json'
       - 'scripts/run_final_experiment.py'
       - 'scripts/summarize_final_experiment.py'
+      - 'src/pretrain_yc_bc.py'
+      - 'src/train_yc_marl.py'
+      - 'src/train_yc_single.py'
+      - 'src/evaluate_yc_policies.py'
       - '.github/workflows/final_experiment_matrix.yml'
       - '.github/workflows/final_experiment_preflight.yml'
   workflow_dispatch:

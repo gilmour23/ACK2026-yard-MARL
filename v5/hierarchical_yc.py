@@ -247,7 +247,9 @@ class HierarchicalYCActor(nn.Module):
             nn.Linear(candidate_hidden,candidate_hidden),nn.Tanh(),
         )
         self.target_context=nn.Linear(hidden,candidate_hidden)
-        self.target_scorer=nn.Linear(candidate_hidden,1)
+        # Target scoring also sees the learned quality distribution of its
+        # feasible Destination set (mean/max pair score).
+        self.target_scorer=nn.Linear(candidate_hidden+2,1)
 
         self.target_query=nn.Linear(candidate_hidden,candidate_hidden,bias=False)
         self.destination_key=nn.Linear(candidate_hidden,candidate_hidden,bias=False)
@@ -295,15 +297,31 @@ class HierarchicalYCActor(nn.Module):
         target_mask=pair_mask.any(dim=-1)
         dest_mask=pair_mask.any(dim=-2)
 
-        target_scores=self.target_scorer(
-            torch.tanh(te+self.target_context(ctx).unsqueeze(1))
-        ).squeeze(-1)
+        target_latent=torch.tanh(te+self.target_context(ctx).unsqueeze(1))
 
         q=self.target_query(te)+self.pair_context(ctx).unsqueeze(1)
         k=self.destination_key(de)
         dot=torch.einsum("bth,bdh->btd",q,k)/math.sqrt(float(self.candidate_hidden))
         db=self.destination_bias(de).squeeze(-1).unsqueeze(1)
         pair_scores=self.pair_scale*dot+db
+
+        pair_w=pair_mask.to(pair_scores.dtype)
+        pair_mean_by_target=(
+            (pair_scores*pair_w).sum(dim=-1)
+            /pair_w.sum(dim=-1).clamp_min(1.0)
+        )
+        pair_neg=torch.finfo(pair_scores.dtype).min
+        pair_max_by_target=pair_scores.masked_fill(~pair_mask,pair_neg).max(dim=-1).values
+        pair_max_by_target=torch.where(
+            target_mask,pair_max_by_target,torch.zeros_like(pair_max_by_target)
+        )
+        target_scores=self.target_scorer(
+            torch.cat([
+                target_latent,
+                pair_mean_by_target.unsqueeze(-1),
+                pair_max_by_target.unsqueeze(-1),
+            ],dim=-1)
+        ).squeeze(-1)
 
         tmean=_masked_mean(te,target_mask,1)
         tmax=_masked_max(te,target_mask,1)

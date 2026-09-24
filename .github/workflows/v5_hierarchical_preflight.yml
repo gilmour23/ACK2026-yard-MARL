@@ -31,3 +31,35 @@ jobs:
         env:
           PYTHONPATH: src:.
         run: pytest -q tests/test_v5_hierarchical_yc.py tests/test_v5_hierarchical_trainer.py
+      - name: Tiny hierarchical trainer smoke
+        env:
+          PYTHONPATH: src:.
+          OMP_NUM_THREADS: '1'
+          MKL_NUM_THREADS: '1'
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from v5.train_hierarchical_marl import HierarchicalPPOConfig, train_hierarchical_marl
+          cfg=HierarchicalPPOConfig(
+              total_steps=1,
+              rollout_steps=1,
+              min_storage_transitions=0,
+              min_yc_transitions=0,
+              max_rollout_multiplier=1,
+              update_epochs=1,
+              critic_extra_epochs=1,
+              minibatch_size=4096,
+              hidden=32,
+              candidate_hidden=8,
+              seed=999,
+          )
+          _,updates=train_hierarchical_marl(cfg,Path('/tmp/v5_smoke'))
+          assert updates
+          assert updates[-1]['rollout_ended_at_terminal'] is True
+          assert updates[-1]['critic_extra_actor_max_abs_delta'] == 0.0
+          print({
+              'global_step':updates[-1]['global_step'],
+              'yc_targets':updates[-1]['yc_feasible_targets'],
+              'yc_pairs':updates[-1]['yc_feasible_pairs'],
+          })
+          PY

@@ -1,0 +1,114 @@
+name: v5-hierarchical-6k-pilot
+
+on:
+  push:
+    branches:
+      - experiment/critic-diagnostic
+    paths:
+      - '.github/workflows/v5_hierarchical_6k_pilot.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  bc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Build shared Storage-only BC once
+        env:
+          PYTHONPATH: src:.
+          OMP_NUM_THREADS: '1'
+          MKL_NUM_THREADS: '1'
+        run: |
+          python scripts/run_v5_hierarchical_pilot.py \
+            --config configs/v5_hierarchical_pilot_20260924.json \
+            build-bc \
+            --out shared_bc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v5-pilot-shared-bc
+          path: shared_bc
+          if-no-files-found: error
+          retention-days: 90
+
+  train_eval:
+    needs: bc
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        arm: [control_rule, treatment_v5]
+        seed: [61, 62, 63]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: v5-pilot-shared-bc
+          path: shared_bc
+      - name: Run one pre-registered arm/seed
+        env:
+          PYTHONPATH: src:.
+          OMP_NUM_THREADS: '1'
+          MKL_NUM_THREADS: '1'
+        run: |
+          python scripts/run_v5_hierarchical_pilot.py \
+            --config configs/v5_hierarchical_pilot_20260924.json \
+            one \
+            --arm ${{ matrix.arm }} \
+            --seed ${{ matrix.seed }} \
+            --bc shared_bc/bc_marl_resource_storage_only.pt \
+            --bc-manifest shared_bc/bc_manifest.json \
+            --out pilot/${{ matrix.arm }}/seed${{ matrix.seed }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v5-pilot-${{ matrix.arm }}-seed${{ matrix.seed }}
+          path: pilot/${{ matrix.arm }}/seed${{ matrix.seed }}
+          if-no-files-found: error
+          retention-days: 90
+
+  aggregate:
+    needs: train_eval
+    if: ${{ needs.train_eval.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: v5-pilot-*-seed*
+          path: collected
+          merge-multiple: false
+      - name: Aggregate bounded pilot
+        env:
+          PYTHONPATH: src:.
+        run: |
+          python scripts/run_v5_hierarchical_pilot.py \
+            --config configs/v5_hierarchical_pilot_20260924.json \
+            aggregate \
+            --root collected \
+            --out pilot_summary
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v5-hierarchical-6k-pilot-summary
+          path: pilot_summary
+          if-no-files-found: error
+          retention-days: 90

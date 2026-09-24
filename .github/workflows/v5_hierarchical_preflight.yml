@@ -1,0 +1,33 @@
+name: v5-hierarchical-preflight
+
+on:
+  push:
+    branches:
+      - experiment/critic-diagnostic
+    paths:
+      - 'v5/**'
+      - 'tests/test_v5_hierarchical_yc.py'
+      - 'tests/test_v5_hierarchical_trainer.py'
+      - 'audits/V5_HIERARCHICAL_ARCHITECTURE_SPEC_20260924.md'
+      - '.github/workflows/v5_hierarchical_preflight.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Syntax check V5
+        run: python -m py_compile v5/__init__.py v5/hierarchical_yc.py v5/train_hierarchical_marl.py
+      - name: V5 tests
+        env:
+          PYTHONPATH: src
+        run: pytest -q tests/test_v5_hierarchical_yc.py tests/test_v5_hierarchical_trainer.py

@@ -1,0 +1,56 @@
+{
+  "protocol_date": "2026-09-24",
+  "protocol_file": "audits/FINAL_EXPERIMENT_PROTOCOL_20260924.md",
+  "learned_arms": ["proposed_marl", "marl_noresource", "single_rule"],
+  "training_seeds": [51, 52, 53],
+  "bc": {
+    "start_seed": 1000,
+    "scenario_count": 8,
+    "epochs": 3,
+    "batch_size": 128,
+    "learning_rate": 0.0005,
+    "rng_seed": 20260924
+  },
+  "training": {
+    "decision_threshold": 30000,
+    "rollout_steps": 512,
+    "min_storage_transitions": 64,
+    "min_yc_transitions": 128,
+    "max_rollout_multiplier": 4,
+    "actor_critic_epochs": 2,
+    "critic_extra_epochs": 18,
+    "minibatch_size": 256,
+    "learning_rate": 0.0003,
+    "clip_coef": 0.2,
+    "max_grad_norm": 0.5,
+    "gamma": 1.0,
+    "gae_lambda": 1.0,
+    "episode_complete_rollout": true,
+    "use_action_q_critic": false,
+    "rule_resolve_proactive_pair": true,
+    "enable_proactive": true,
+    "arrival_rate_per_hour": 20.0,
+    "truck_wait_weight": 1.0,
+    "storage_wait_weight": 1.0,
+    "extra_move_weight": 0.1,
+    "risk_shaping_weight": 0.0,
+    "yc_queue_shaping_weight": 0.0
+  },
+  "evaluation": {
+    "scenarios_start": 901,
+    "scenarios_end": 930,
+    "stochastic_repeats": 3,
+    "policy_seed_rule": "scenario*100+repeat_index_0_based",
+    "bootstrap_resamples": 10000,
+    "bootstrap_rng_seed": 20260924
+  },
+  "diagnostic_banks_already_consumed": [
+    [601, 610],
+    [701, 710],
+    [801, 810],
+    [851, 860],
+    [871, 880],
+    [881, 885]
+  ],
+  "historical_12k_checkpoint_used_for_final_init": false
+}

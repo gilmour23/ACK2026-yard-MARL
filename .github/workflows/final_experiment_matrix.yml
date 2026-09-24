@@ -1,6 +1,11 @@
 name: final-experiment-matrix
 
 on:
+  push:
+    branches:
+      - experiment/critic-diagnostic
+    paths:
+      - 'audits/FINAL_RUN_AUTHORIZED_20260924.md'
   workflow_dispatch:
     inputs:
       confirmation:
@@ -13,7 +18,7 @@ permissions:
 
 jobs:
   preflight:
-    if: ${{ github.event.inputs.confirmation == 'RUN_FINAL_901_930' }}
+    if: ${{ github.event_name == 'push' || github.event.inputs.confirmation == 'RUN_FINAL_901_930' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

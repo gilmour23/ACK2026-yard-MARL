@@ -29,5 +29,5 @@ jobs:
         run: python -m py_compile v5/__init__.py v5/hierarchical_yc.py v5/train_hierarchical_marl.py
       - name: V5 tests
         env:
-          PYTHONPATH: src
+          PYTHONPATH: src:.
         run: pytest -q tests/test_v5_hierarchical_yc.py tests/test_v5_hierarchical_trainer.py

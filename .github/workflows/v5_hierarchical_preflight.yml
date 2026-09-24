@@ -26,7 +26,7 @@ jobs:
           python-version: '3.12'
       - run: pip install -r requirements.txt
       - name: Syntax check V5
-        run: python -m py_compile v5/__init__.py v5/hierarchical_yc.py v5/train_hierarchical_marl.py
+        run: python -m py_compile v5/__init__.py v5/hierarchical_yc.py v5/train_hierarchical_marl.py v5/evaluate_hierarchical.py
       - name: V5 tests
         env:
           PYTHONPATH: src:.

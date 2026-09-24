@@ -1,0 +1,89 @@
+name: destination-rank-replay
+
+on:
+  push:
+    branches:
+      - experiment/critic-diagnostic
+    paths:
+      - '.github/workflows/destination_rank_replay.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: [51, 52, 53]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Download frozen final Proposed checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: final-train-proposed_marl-seed${{ matrix.seed }}
+          path: source
+          github-token: ${{ github.token }}
+          run-id: 35951014861
+      - name: Download frozen counterfactual artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tdcf-seed${{ matrix.seed }}
+          path: tdcf
+          github-token: ${{ github.token }}
+          run-id: 35975570052
+      - name: Replay destination heuristic ranks
+        env:
+          PYTHONPATH: src:scripts
+          OMP_NUM_THREADS: '1'
+          MKL_NUM_THREADS: '1'
+        run: |
+          python scripts/destination_rank_replay.py \
+            --checkpoint source/train/resource_marl_final.pt \
+            --tdcf-dir tdcf \
+            --training-seed ${{ matrix.seed }} \
+            --out replay/seed${{ matrix.seed }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: destination-rank-seed${{ matrix.seed }}
+          path: replay/seed${{ matrix.seed }}
+          if-no-files-found: error
+          retention-days: 90
+
+  aggregate:
+    needs: replay
+    if: ${{ needs.replay.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: destination-rank-seed*
+          path: collected
+          merge-multiple: false
+      - name: Aggregate destination ranks
+        env:
+          PYTHONPATH: src:scripts
+        run: |
+          python scripts/summarize_destination_rank_replay.py \
+            --root collected \
+            --out destination_rank_summary
+      - uses: actions/upload-artifact@v4
+        with:
+          name: destination-rank-summary
+          path: destination_rank_summary
+          if-no-files-found: error
+          retention-days: 90

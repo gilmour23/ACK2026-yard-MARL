@@ -174,11 +174,18 @@ def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--checkpoint",required=True)
     ap.add_argument("--training-seed",required=True,type=int)
+    ap.add_argument("--scenario-start",type=int,default=1221)
+    ap.add_argument("--scenario-end",type=int,default=1230)
     ap.add_argument("--out",required=True)
     a=ap.parse_args()
     seed=int(a.training_seed)
     if seed not in {61,62,63}:
         raise ValueError(seed)
+
+    scenario_start=int(a.scenario_start)
+    scenario_end=int(a.scenario_end)
+    if not (1221 <= scenario_start <= scenario_end <= 1230):
+        raise ValueError((scenario_start,scenario_end))
 
     model=load_hierarchical_model(Path(a.checkpoint))
     out=Path(a.out);out.mkdir(parents=True,exist_ok=True)
@@ -188,7 +195,7 @@ def main():
     states=[]
     no_probe=[]
 
-    for scenario in range(1221,1231):
+    for scenario in range(scenario_start,scenario_end+1):
         snapshot,meta=find_probe(model,scenario,seed,min_targets=3)
         if snapshot is None:
             no_probe.append(meta)
@@ -296,6 +303,8 @@ def main():
 
     summary={
         "training_seed":seed,
+        "scenario_start":scenario_start,
+        "scenario_end":scenario_end,
         "valid_probe_states":len(states),
         "no_probe_states":len(no_probe),
         "destination_rows":len(pair_rows),

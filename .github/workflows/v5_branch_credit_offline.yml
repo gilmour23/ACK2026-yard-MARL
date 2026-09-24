@@ -1,0 +1,85 @@
+name: v5-branch-credit-offline
+
+on:
+  push:
+    branches:
+      - experiment/critic-diagnostic
+    paths:
+      - '.github/workflows/v5_branch_credit_offline.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: [61, 62, 63]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Download frozen V5 pilot checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: v5-pilot-treatment_v5-seed${{ matrix.seed }}
+          path: source
+          github-token: ${{ github.token }}
+          run-id: 35989214777
+      - name: Collect exhaustive frozen-policy counterfactual labels
+        env:
+          PYTHONPATH: src:.
+          OMP_NUM_THREADS: '1'
+          MKL_NUM_THREADS: '1'
+        run: |
+          CKPT=$(find source -name hierarchical_marl_final.pt -print -quit)
+          test -n "$CKPT"
+          python scripts/collect_v5_branch_credit_dataset.py \
+            --checkpoint "$CKPT" \
+            --training-seed ${{ matrix.seed }} \
+            --out branch_credit/seed${{ matrix.seed }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v5-branch-credit-seed${{ matrix.seed }}
+          path: branch_credit/seed${{ matrix.seed }}
+          if-no-files-found: error
+          retention-days: 90
+
+  fit:
+    needs: collect
+    if: ${{ needs.collect.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: v5-branch-credit-seed*
+          path: collected
+          merge-multiple: false
+      - name: Fit grouped-CV offline branch critics
+        env:
+          PYTHONPATH: src:.
+          OMP_NUM_THREADS: '1'
+          MKL_NUM_THREADS: '1'
+        run: |
+          python scripts/fit_v5_branch_credit_offline.py \
+            --root collected \
+            --out branch_credit_summary
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v5-branch-credit-offline-summary
+          path: branch_credit_summary
+          if-no-files-found: error
+          retention-days: 90

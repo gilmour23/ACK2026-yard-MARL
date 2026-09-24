@@ -1,0 +1,37 @@
+name: final-experiment-preflight
+
+on:
+  push:
+    branches:
+      - experiment/critic-diagnostic
+    paths:
+      - 'configs/final_experiment_20260924.json'
+      - 'scripts/run_final_experiment.py'
+      - 'scripts/summarize_final_experiment.py'
+      - '.github/workflows/final_experiment_matrix.yml'
+      - '.github/workflows/final_experiment_preflight.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Syntax check
+        run: python -m py_compile scripts/run_final_experiment.py scripts/summarize_final_experiment.py
+      - name: Frozen plan only
+        env:
+          PYTHONPATH: src:scripts
+        run: python scripts/run_final_experiment.py --config configs/final_experiment_20260924.json plan
+      - name: Tests
+        env:
+          PYTHONPATH: src:scripts
+        run: pytest -q

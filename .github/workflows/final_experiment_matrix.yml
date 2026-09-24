@@ -1,0 +1,176 @@
+name: final-experiment-matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type RUN_FINAL_901_930 to open the frozen final test bank'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    if: ${{ github.event.inputs.confirmation == 'RUN_FINAL_901_930' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Frozen-plan check
+        env:
+          PYTHONPATH: src:scripts
+        run: python scripts/run_final_experiment.py --config configs/final_experiment_20260924.json plan
+      - name: Tests
+        env:
+          PYTHONPATH: src:scripts
+        run: pytest -q
+
+  train:
+    needs: preflight
+    if: ${{ needs.preflight.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 9
+      matrix:
+        arm: [proposed_marl, marl_noresource, single_rule]
+        seed: [51, 52, 53]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Train frozen arm/seed
+        env:
+          PYTHONPATH: src:scripts
+          OMP_NUM_THREADS: '1'
+          MKL_NUM_THREADS: '1'
+          ARM: ${{ matrix.arm }}
+          SEED: ${{ matrix.seed }}
+        run: |
+          python scripts/run_final_experiment.py \
+            --config configs/final_experiment_20260924.json \
+            train --arm "$ARM" --seed "$SEED" --out "final_train/$ARM/seed$SEED"
+      - name: Upload training artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-train-${{ matrix.arm }}-seed${{ matrix.seed }}
+          path: final_train/${{ matrix.arm }}/seed${{ matrix.seed }}
+          if-no-files-found: error
+          retention-days: 90
+
+  evaluate:
+    needs: train
+    if: ${{ needs.train.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 9
+      matrix:
+        arm: [proposed_marl, marl_noresource, single_rule]
+        seed: [51, 52, 53]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: final-train-${{ matrix.arm }}-seed${{ matrix.seed }}
+          path: downloaded
+      - name: Evaluate frozen 901-930 bank
+        env:
+          PYTHONPATH: src:scripts
+          OMP_NUM_THREADS: '1'
+          MKL_NUM_THREADS: '1'
+          ARM: ${{ matrix.arm }}
+          SEED: ${{ matrix.seed }}
+        run: |
+          if [ "$ARM" = "single_rule" ]; then
+            CK="downloaded/train/single_ppo_final.pt"
+          else
+            CK="downloaded/train/resource_marl_final.pt"
+          fi
+          test -f "$CK"
+          python scripts/run_final_experiment.py \
+            --config configs/final_experiment_20260924.json \
+            eval-learned --arm "$ARM" --seed "$SEED" --checkpoint "$CK" \
+            --out "final_eval/$ARM/seed$SEED"
+      - name: Upload evaluation artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-eval-${{ matrix.arm }}-seed${{ matrix.seed }}
+          path: final_eval/${{ matrix.arm }}/seed${{ matrix.seed }}
+          if-no-files-found: error
+          retention-days: 90
+
+  heuristic:
+    needs: train
+    if: ${{ needs.train.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Evaluate information-aware heuristic on 901-930
+        env:
+          PYTHONPATH: src:scripts
+          OMP_NUM_THREADS: '1'
+          MKL_NUM_THREADS: '1'
+        run: |
+          python scripts/run_final_experiment.py \
+            --config configs/final_experiment_20260924.json \
+            eval-heuristic --out final_eval/heuristic
+      - uses: actions/upload-artifact@v4
+        with:
+          name: final-eval-heuristic
+          path: final_eval/heuristic
+          if-no-files-found: error
+          retention-days: 90
+
+  aggregate:
+    needs: [evaluate, heuristic]
+    if: ${{ needs.evaluate.result == 'success' && needs.heuristic.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: final-eval-*
+          path: collected_eval
+          merge-multiple: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: final-train-*
+          path: collected_train
+          merge-multiple: false
+      - name: Aggregate pre-registered statistics
+        env:
+          PYTHONPATH: src:scripts
+        run: |
+          python scripts/summarize_final_experiment.py \
+            --config configs/final_experiment_20260924.json \
+            --eval-root collected_eval --training-root collected_train \
+            --out final_results
+      - uses: actions/upload-artifact@v4
+        with:
+          name: final-results-901-930
+          path: final_results
+          if-no-files-found: error
+          retention-days: 90

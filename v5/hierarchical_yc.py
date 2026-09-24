@@ -267,6 +267,7 @@ class HierarchicalYCActor(nn.Module):
         with torch.no_grad():
             nn.init.zeros_(self.target_scorer.weight)
             nn.init.zeros_(self.target_scorer.bias)
+            nn.init.zeros_(self.destination_bias.weight)
             self.pair_scale.zero_()
             op_last=self.operation_head[-1]
             if not isinstance(op_last,nn.Linear):
@@ -463,3 +464,48 @@ class HierarchicalResourceCooperativeModel(nn.Module):
 
     def value(self,global_obs:torch.Tensor)->torch.Tensor:
         return self.critic(global_obs)
+
+
+def heuristic_ranks_for_selected_pair(
+    env: ResourceMARLYardEnv,
+    block: int,
+    target_position: int,
+    destination: int,
+) -> tuple[int,int]:
+    """Return 1-based Target and Destination ranks under the current heuristics.
+
+    Used only for V5 diagnostics; it does not constrain the learned policy.
+    """
+    sim=env.sim
+    if sim is None:
+        raise RuntimeError("environment is not initialized")
+    cid=sim._cid_at_target_position(block,int(target_position))
+    if cid is None:
+        raise RuntimeError(("missing selected target",target_position))
+    targets=list(sim.proactive_candidates(block))
+    try:
+        target_rank=targets.index(cid)+1
+    except ValueError as exc:
+        raise RuntimeError(("selected target is not proactive-eligible",cid)) from exc
+
+    c=sim.containers[cid]
+    if c.stack is None:
+        raise RuntimeError(("selected target has no source stack",cid))
+    source=int(c.stack)
+    moving_id=sim.yard.top(block,source)
+    if moving_id is None or moving_id==cid:
+        raise RuntimeError(("selected target has no blocker",cid))
+    moving=sim.containers[moving_id]
+    scored=[]
+    for dest in sim.yard.feasible_relocation_stacks(block,source):
+        stack=sim.yard.stacks[block][dest]
+        inversion=sum(1 for lower_id in stack if sim.containers[lower_id].eta < moving.eta)
+        height=len(stack)/sim.yard.max_tier
+        scored.append((float(inversion+0.35*height),int(dest)))
+    scored.sort(key=lambda x:(x[0],x[1]))
+    order=[d for _,d in scored]
+    try:
+        dest_rank=order.index(int(destination))+1
+    except ValueError as exc:
+        raise RuntimeError(("selected destination not feasible",destination)) from exc
+    return int(target_rank),int(dest_rank)

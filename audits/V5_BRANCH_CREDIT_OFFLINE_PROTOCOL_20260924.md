@@ -87,8 +87,11 @@ All three source-model states for a held-out scenario remain in the test fold.
 For each fold and branch:
 - standardize inputs using training-fold statistics only;
 - standardize labels using training-fold statistics only;
-- fit a two-hidden-layer MLP offline with Adam/MSE;
-- train 3 deterministic critic initializations and average test predictions.
+- fit MLP `input -> 128 -> 64 -> 1` with Tanh activations;
+- Adam, learning rate `1e-3`, weight decay `1e-5`;
+- 400 epochs, minibatch size 256;
+- critic initialization/shuffle seeds `20260924, 20260925, 20260926`;
+- average the three held-out predictions.
 
 The critic is diagnostic only and is not inserted into PPO in this study.
 
@@ -100,7 +103,7 @@ For Target and Destination separately:
 - within-state pairwise ordering accuracy;
 - within-state Spearman rank correlation;
 - critic-selected Top-1 regret:
-  `best actual J - selected actual J` expressed as nonnegative J regret;
+  `selected actual J - best actual J` expressed as nonnegative J regret;
 - uniform-random expected regret;
 - current heuristic Top-1 regret;
 - fold-specific ordering accuracy.

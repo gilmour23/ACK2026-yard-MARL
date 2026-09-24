@@ -64,6 +64,21 @@ def bootstrap_ci(diffs: np.ndarray, n: int, seed: int) -> tuple[float,float,floa
     return float(diffs.mean()),float(lo),float(hi)
 
 
+def validate_unique_matrix_keys(records: list[dict], expected_pairs: set[tuple[str,int]]) -> list[tuple[str,int]]:
+    keys=[(r["manifest"]["arm"],int(r["manifest"]["training_seed"])) for r in records]
+    counts=Counter(keys)
+    duplicates=sorted(k for k,v in counts.items() if v!=1)
+    got=set(keys)
+    if len(records)!=len(expected_pairs) or got!=expected_pairs or duplicates:
+        raise RuntimeError({
+            "missing":sorted(expected_pairs-got),
+            "extra":sorted(got-expected_pairs),
+            "duplicate_or_repeated":duplicates,
+            "record_count":len(records),
+        })
+    return keys
+
+
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--eval-root",required=True)
@@ -83,17 +98,7 @@ def main():
     learned_records=[r for r in records if r["manifest"]["arm"] in LEARNED]
     heur=[r for r in records if r["manifest"]["arm"]=="heuristic"]
     expected_pairs={(arm,seed) for arm in LEARNED for seed in cfg["training_seeds"]}
-    learned_keys=[(r["manifest"]["arm"],int(r["manifest"]["training_seed"])) for r in learned_records]
-    counts=Counter(learned_keys)
-    duplicates=sorted(k for k,v in counts.items() if v!=1)
-    got_pairs=set(learned_keys)
-    if len(learned_records)!=len(expected_pairs) or got_pairs!=expected_pairs or duplicates:
-        raise RuntimeError({
-            "missing":sorted(expected_pairs-got_pairs),
-            "extra":sorted(got_pairs-expected_pairs),
-            "duplicate_or_repeated":duplicates,
-            "record_count":len(learned_records),
-        })
+    learned_keys=validate_unique_matrix_keys(learned_records,expected_pairs)
     if len(heur)!=1: raise RuntimeError(f"Expected one heuristic evaluation, got {len(heur)}")
 
     train_by_key={}

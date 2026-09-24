@@ -74,12 +74,21 @@ def main() -> None:
     args = ap.parse_args()
 
     repo = Path(__file__).resolve().parents[1]
-    checkpoint = Path(args.checkpoint).resolve()
+    checkpoint_arg = Path(args.checkpoint).resolve()
     out_root = Path(args.out_root).resolve()
     workers = max(1, min(int(args.max_workers), len(SCENARIOS)))
 
-    if not checkpoint.exists():
-        raise FileNotFoundError(checkpoint)
+    if not checkpoint_arg.exists():
+        raise FileNotFoundError(checkpoint_arg)
+    if checkpoint_arg.is_dir():
+        matches = sorted(checkpoint_arg.rglob("hierarchical_marl_final.pt"))
+        if len(matches) != 1:
+            raise RuntimeError(
+                f"expected exactly one hierarchical_marl_final.pt under {checkpoint_arg}, got {matches}"
+            )
+        checkpoint = matches[0]
+    else:
+        checkpoint = checkpoint_arg
 
     print(
         json.dumps(

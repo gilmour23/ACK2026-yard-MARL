@@ -269,6 +269,29 @@ def read_eval_csv(path: Path) -> list[dict]:
         return list(csv.DictReader(f))
 
 
+def validate_learned_eval_rows(rows: list[dict], ev: dict, include_resource: bool) -> None:
+    start=int(ev["scenarios_start"]); end=int(ev["scenarios_end"])
+    repeats=int(ev["stochastic_repeats"])
+    expected_pairs={(scenario, scenario*100+r) for scenario in range(start,end+1) for r in range(repeats)}
+    got_pairs=[(int(row["seed"]),int(row["policy_seed"])) for row in rows]
+    if len(got_pairs)!=len(expected_pairs):
+        raise RuntimeError(("evaluation row count mismatch",len(got_pairs),len(expected_pairs)))
+    if len(set(got_pairs))!=len(got_pairs):
+        raise RuntimeError("duplicate scenario/policy_seed rows")
+    if set(got_pairs)!=expected_pairs:
+        raise RuntimeError("missing or unexpected scenario/policy_seed rows")
+    for row in rows:
+        scenario=int(row["seed"])
+        if not (start <= scenario <= end): raise RuntimeError("final-bank contamination")
+        if row["evaluation_mode"]!="stochastic": raise RuntimeError("non-stochastic learned evaluation")
+        if row["rule_resolve_proactive_pair"].lower()!="true": raise RuntimeError("rule resolver disabled")
+        if row["include_resource_state"].lower()!=str(bool(include_resource)).lower():
+            raise RuntimeError("resource-state flag mismatch")
+        if row["enable_proactive"].lower()!="true": raise RuntimeError("proactive support disabled")
+        for m in METRICS:
+            if not math.isfinite(float(row[m])): raise RuntimeError(("non-finite",m))
+
+
 def evaluate_learned(cfg: dict, arm: str, seed: int, checkpoint: Path, out: Path, config_path: Path) -> dict:
     if arm not in cfg["learned_arms"] or seed not in cfg["training_seeds"]:
         raise ValueError((arm,seed))
@@ -286,18 +309,7 @@ def evaluate_learned(cfg: dict, arm: str, seed: int, checkpoint: Path, out: Path
         stochastic=True,rule_resolve_proactive_pair=True,
     )
     rows=read_eval_csv(csv_path)
-    expected=(int(ev["scenarios_end"])-int(ev["scenarios_start"])+1)*int(ev["stochastic_repeats"])
-    if len(rows)!=expected: raise RuntimeError((len(rows),expected))
-    for row in rows:
-        scenario=int(row["seed"]); policy_seed=int(row["policy_seed"])
-        if scenario<901 or scenario>930: raise RuntimeError("final-bank contamination")
-        # Determine repeat from the only allowed common-random-number rule.
-        if policy_seed not in {scenario*100+r for r in range(int(ev["stochastic_repeats"]))}:
-            raise RuntimeError("policy seed mismatch")
-        if row["evaluation_mode"]!="stochastic": raise RuntimeError("non-stochastic learned evaluation")
-        if row["rule_resolve_proactive_pair"].lower()!="true": raise RuntimeError("rule resolver disabled")
-        for m in METRICS:
-            if not math.isfinite(float(row[m])): raise RuntimeError(("non-finite",m))
+    validate_learned_eval_rows(rows,ev,include_resource)
     manifest={
         "phase":"evaluation","arm":arm,"kind":kind,"training_seed":seed,
         "git_commit":git_commit(),"protocol_file":cfg["protocol_file"],
@@ -324,10 +336,15 @@ def evaluate_heuristic(cfg: dict, out: Path, config_path: Path) -> dict:
         stochastic=False,
     )
     rows=read_eval_csv(csv_path)
-    expected=int(ev["scenarios_end"])-int(ev["scenarios_start"])+1
-    if len(rows)!=expected: raise RuntimeError((len(rows),expected))
+    expected_scenarios=set(range(int(ev["scenarios_start"]),int(ev["scenarios_end"])+1))
+    got_scenarios=[int(row["seed"]) for row in rows]
+    if len(got_scenarios)!=len(expected_scenarios) or len(set(got_scenarios))!=len(got_scenarios):
+        raise RuntimeError("heuristic scenario rows are missing or duplicated")
+    if set(got_scenarios)!=expected_scenarios:
+        raise RuntimeError("heuristic scenario set mismatch")
     for row in rows:
-        if int(row["seed"])<901 or int(row["seed"])>930: raise RuntimeError("final-bank contamination")
+        if row["method"]!="heuristic": raise RuntimeError("heuristic method label mismatch")
+        if row["evaluation_mode"]!="flat_greedy": raise RuntimeError("heuristic evaluation mode mismatch")
         for m in METRICS:
             if not math.isfinite(float(row[m])): raise RuntimeError(("non-finite",m))
     manifest={

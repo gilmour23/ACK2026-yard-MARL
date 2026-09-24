@@ -269,6 +269,28 @@ def main():
     if {int(s["training_seed"]) for s in summaries}!={61,62,63}:
         raise RuntimeError(("source seed set mismatch",summaries))
 
+    expected_states={(seed,scenario) for seed in (61,62,63) for scenario in range(1221,1231)}
+    target_state_keys={(int(r["training_seed"]),int(r["scenario"])) for r in target_rows}
+    destination_state_keys={(int(r["training_seed"]),int(r["scenario"])) for r in dest_rows}
+    if target_state_keys!=expected_states or destination_state_keys!=expected_states:
+        raise RuntimeError((
+            "probe-state coverage mismatch",
+            sorted(expected_states-target_state_keys),
+            sorted(expected_states-destination_state_keys),
+        ))
+    target_keys=[
+        (int(r["training_seed"]),int(r["scenario"]),int(r["target_position"]))
+        for r in target_rows
+    ]
+    destination_keys=[
+        (int(r["training_seed"]),int(r["scenario"]),int(r["target_position"]),int(r["destination"]))
+        for r in dest_rows
+    ]
+    if len(target_keys)!=len(set(target_keys)):
+        raise RuntimeError("duplicate Target rows")
+    if len(destination_keys)!=len(set(destination_keys)):
+        raise RuntimeError("duplicate Destination rows")
+
     target=run_branch(target_rows,"target")
     destination=run_branch(dest_rows,"destination")
     both=bool(target["gate_pass"] and destination["gate_pass"])

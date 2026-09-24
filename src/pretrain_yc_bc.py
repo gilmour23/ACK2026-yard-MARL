@@ -43,6 +43,11 @@ def collect_storage_dataset(seeds:int=8,start_seed:int=1000,arrival_rate_per_hou
 
 
 def train_bc(kind:str,out_path:Path,seeds:int=8,epochs:int=3,batch_size:int=128,lr:float=5e-4,arrival_rate_per_hour:float=20.0,include_resource_state:bool=True,enable_proactive:bool=True,seed:int=1,hidden:int=128)->dict:
+    # The final protocol defines one BC RNG seed. Apply it to torch as well as
+    # the minibatch-order generator so repeated arm jobs receive the same
+    # architecture-matched BC initialization and weights.
+    torch.manual_seed(int(seed))
+    np.random.seed(int(seed))
     ds=collect_storage_dataset(seeds=seeds,arrival_rate_per_hour=arrival_rate_per_hour,include_resource_state=include_resource_state)
     env=ResourceMARLYardEnv(seed=1,arrival_rate_per_hour=arrival_rate_per_hour,include_resource_state=include_resource_state,enable_proactive=enable_proactive);env.reset()
     if kind=='marl': model:nn.Module=ResourceCooperativeModel(env.global_obs_dim,env.storage_obs_dim,env.yc_obs_dim,hidden=hidden)

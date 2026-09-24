@@ -401,6 +401,8 @@ class HierarchicalYCActor(nn.Module):
         obs: torch.Tensor,
         pair_mask: torch.Tensor,
         flat_action_mask: torch.Tensor,
+        generator: torch.Generator | None = None,
+        stochastic: bool = True,
     ) -> HierarchicalSample:
         if obs.ndim!=1 or pair_mask.ndim!=2:
             raise ValueError("sample expects one YC state")
@@ -408,7 +410,10 @@ class HierarchicalYCActor(nn.Module):
         has_target=bool(target_mask.any())
         op_mask=torch.tensor([True,has_target],dtype=torch.bool,device=obs.device)
         op_dist=Categorical(logits=op_logits.masked_fill(~op_mask,torch.finfo(op_logits.dtype).min))
-        op=int(op_dist.sample().item())
+        if stochastic:
+            op=int(torch.multinomial(op_dist.probs,1,generator=generator).item())
+        else:
+            op=int(op_dist.probs.argmax().item())
 
         tpos=0;dest=0
         if op==0:
@@ -420,10 +425,16 @@ class HierarchicalYCActor(nn.Module):
                 raise RuntimeError("Default branch has no simulator action")
         else:
             tdist=Categorical(logits=target_logits.masked_fill(~target_mask,torch.finfo(target_logits.dtype).min))
-            tpos=int(tdist.sample().item())
+            if stochastic:
+                tpos=int(torch.multinomial(tdist.probs,1,generator=generator).item())
+            else:
+                tpos=int(tdist.probs.argmax().item())
             dmask=pair_mask[tpos]
             ddist=Categorical(logits=dest_logits[tpos].masked_fill(~dmask,torch.finfo(dest_logits.dtype).min))
-            dest=int(ddist.sample().item())
+            if stochastic:
+                dest=int(torch.multinomial(ddist.probs,1,generator=generator).item())
+            else:
+                dest=int(ddist.probs.argmax().item())
             flat=encode_proactive_action(tpos,dest)
             if not bool(flat_action_mask[flat]):
                 raise RuntimeError(("hierarchical actor sampled simulator-invalid action",flat,tpos,dest))

@@ -12,7 +12,7 @@ import argparse
 import csv
 import json
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 import numpy as np
 
@@ -77,24 +77,60 @@ def main():
     records=find_eval_records(Path(a.eval_root))
     train_manifests=find_training_manifests(Path(a.training_root) if a.training_root else None)
 
+    known_arms=set(LEARNED)|{"heuristic"}
+    unknown=[r["manifest"].get("arm") for r in records if r["manifest"].get("arm") not in known_arms]
+    if unknown: raise RuntimeError({"unexpected evaluation arms":unknown})
     learned_records=[r for r in records if r["manifest"]["arm"] in LEARNED]
     heur=[r for r in records if r["manifest"]["arm"]=="heuristic"]
     expected_pairs={(arm,seed) for arm in LEARNED for seed in cfg["training_seeds"]}
-    got_pairs={(r["manifest"]["arm"],int(r["manifest"]["training_seed"])) for r in learned_records}
-    if got_pairs!=expected_pairs:
-        raise RuntimeError({"missing":sorted(expected_pairs-got_pairs),"extra":sorted(got_pairs-expected_pairs)})
+    learned_keys=[(r["manifest"]["arm"],int(r["manifest"]["training_seed"])) for r in learned_records]
+    counts=Counter(learned_keys)
+    duplicates=sorted(k for k,v in counts.items() if v!=1)
+    got_pairs=set(learned_keys)
+    if len(learned_records)!=len(expected_pairs) or got_pairs!=expected_pairs or duplicates:
+        raise RuntimeError({
+            "missing":sorted(expected_pairs-got_pairs),
+            "extra":sorted(got_pairs-expected_pairs),
+            "duplicate_or_repeated":duplicates,
+            "record_count":len(learned_records),
+        })
     if len(heur)!=1: raise RuntimeError(f"Expected one heuristic evaluation, got {len(heur)}")
 
+    train_by_key={}
+    if train_manifests:
+        train_keys=[(m["arm"],int(m["training_seed"])) for m in train_manifests]
+        train_counts=Counter(train_keys)
+        if len(train_manifests)!=len(expected_pairs) or set(train_keys)!=expected_pairs or any(v!=1 for v in train_counts.values()):
+            raise RuntimeError("training manifest matrix is incomplete or duplicated")
+        train_by_key={k:m for k,m in zip(train_keys,train_manifests)}
+
     final_scenarios=set(range(cfg["evaluation"]["scenarios_start"],cfg["evaluation"]["scenarios_end"]+1))
+    repeats=int(cfg["evaluation"]["stochastic_repeats"])
+    expected_eval_pairs={(s,s*100+r) for s in final_scenarios for r in range(repeats)}
     by_arm_seed={}
     for r in learned_records:
         m=r["manifest"];key=(m["arm"],int(m["training_seed"]))
+        if key in by_arm_seed: raise RuntimeError(("duplicate learned evaluation",key))
         rows=r["rows"]
-        scenarios={int(x["seed"]) for x in rows}
-        if scenarios!=final_scenarios: raise RuntimeError((key,scenarios^final_scenarios))
+        got_eval_pairs=[(int(x["seed"]),int(x["policy_seed"])) for x in rows]
+        if len(got_eval_pairs)!=len(expected_eval_pairs) or len(set(got_eval_pairs))!=len(got_eval_pairs):
+            raise RuntimeError(("duplicate or missing stochastic repeats",key))
+        if set(got_eval_pairs)!=expected_eval_pairs:
+            raise RuntimeError(("scenario/policy-seed matrix mismatch",key))
+        if train_by_key:
+            tm=train_by_key[key]
+            if m.get("checkpoint_sha256")!=tm.get("final_checkpoint_sha256"):
+                raise RuntimeError(("evaluation checkpoint does not match training checkpoint",key))
+            if m.get("config_sha256")!=tm.get("config_sha256"):
+                raise RuntimeError(("evaluation/training config hash mismatch",key))
+            if m.get("git_commit")!=tm.get("git_commit"):
+                raise RuntimeError(("evaluation/training commit mismatch",key))
         by_arm_seed[key]=rows
     heuristic_rows=heur[0]["rows"]
-    if {int(x["seed"]) for x in heuristic_rows}!=final_scenarios:
+    heuristic_scenarios=[int(x["seed"]) for x in heuristic_rows]
+    if len(heuristic_scenarios)!=len(final_scenarios) or len(set(heuristic_scenarios))!=len(heuristic_scenarios):
+        raise RuntimeError("heuristic scenarios are missing or duplicated")
+    if set(heuristic_scenarios)!=final_scenarios:
         raise RuntimeError("heuristic scenario set mismatch")
 
     cell={}

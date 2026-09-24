@@ -1,0 +1,108 @@
+name: v5-branch-credit-offline-recovery
+
+on:
+  push:
+    branches:
+      - experiment/critic-diagnostic
+    paths:
+      - '.github/workflows/v5_branch_credit_offline_recovery.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  seed63_shards:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        scenario: [1221,1222,1223,1224,1225,1226,1227,1228,1229,1230]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Download frozen V5 seed63 checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: v5-pilot-treatment_v5-seed63
+          path: source
+          github-token: ${{ github.token }}
+          run-id: 35989214777
+      - name: Collect one deterministic seed63 scenario shard
+        env:
+          PYTHONPATH: src:.
+          OMP_NUM_THREADS: '1'
+          MKL_NUM_THREADS: '1'
+        run: |
+          CKPT=$(find source -name hierarchical_marl_final.pt -print -quit)
+          test -n "$CKPT"
+          python scripts/collect_v5_branch_credit_dataset.py \
+            --checkpoint "$CKPT" \
+            --training-seed 63 \
+            --scenario-start ${{ matrix.scenario }} \
+            --scenario-end ${{ matrix.scenario }} \
+            --out branch_credit/seed63/scenario${{ matrix.scenario }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v5-branch-credit-seed63-scenario${{ matrix.scenario }}
+          path: branch_credit/seed63/scenario${{ matrix.scenario }}
+          if-no-files-found: error
+          retention-days: 90
+
+  fit:
+    needs: seed63_shards
+    if: ${{ needs.seed63_shards.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+
+      - name: Reuse complete seed61 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: v5-branch-credit-seed61
+          path: collected/seed61
+          github-token: ${{ github.token }}
+          run-id: 35994074454
+
+      - name: Reuse complete seed62 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: v5-branch-credit-seed62
+          path: collected/seed62
+          github-token: ${{ github.token }}
+          run-id: 35994074454
+
+      - name: Download seed63 scenario shards
+        uses: actions/download-artifact@v4
+        with:
+          pattern: v5-branch-credit-seed63-scenario*
+          path: collected/seed63
+          merge-multiple: false
+
+      - name: Fit pre-registered grouped-CV offline branch critics
+        env:
+          PYTHONPATH: src:.
+          OMP_NUM_THREADS: '1'
+          MKL_NUM_THREADS: '1'
+        run: |
+          python scripts/fit_v5_branch_credit_offline.py \
+            --root collected \
+            --out branch_credit_summary
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v5-branch-credit-offline-recovery-summary
+          path: branch_credit_summary
+          if-no-files-found: error
+          retention-days: 90

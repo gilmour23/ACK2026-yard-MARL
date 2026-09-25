@@ -87,6 +87,15 @@ def test_v6_operation_mapping_preserves_simulator_semantics():
     assert h.flat_action(OP_DEFAULT) == h.default_flat_action
 
 
+def test_v6_operation_initialization_is_exactly_common():
+    actor = CandidateAwareYCOperationActor(hidden=32, pair_hidden=8)
+    obs = torch.randn(HYBRID_YC_OBS_DIM, dtype=torch.float32)
+    with torch.no_grad():
+        logits = actor(obs)
+        probs = torch.softmax(logits, dim=-1)
+    assert np.isclose(float(probs[OP_PROACTIVE]), 0.10, atol=1e-6)
+
+
 def test_v6_has_no_learned_2500_pair_scoring_head():
     env = ResourceMARLYardEnv(
         seed=1,

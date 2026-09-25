@@ -134,7 +134,7 @@ def build_hybrid_yc_operation_input(
     if proactive_flat is None:
         if resolved is not None:
             raise RuntimeError(("resolver/mask proactive mismatch", resolved))
-    elif int(resolved) != proactive_flat:
+    elif resolved is None or int(resolved) != proactive_flat:
         raise RuntimeError(("resolver/mask proactive mismatch", resolved, proactive_flat))
 
     context = env._yc_context_observation(

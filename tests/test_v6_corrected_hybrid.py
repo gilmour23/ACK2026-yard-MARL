@@ -108,11 +108,25 @@ def test_v6_has_no_learned_2500_pair_scoring_head():
 
 
 def test_v6_pair_features_can_change_operation_logits():
-    torch.manual_seed(20260926)
     actor = CandidateAwareYCOperationActor(
         hidden=32,
         pair_hidden=8,
     )
+    # Make one explicit pair-feature -> pair-latent -> operation-logit path.
+    with torch.no_grad():
+        actor.pair_encoder[0].weight.zero_()
+        actor.pair_encoder[0].bias.zero_()
+        actor.pair_encoder[0].weight[0, 3] = 1.0
+        actor.pair_encoder[2].weight.zero_()
+        actor.pair_encoder[2].bias.zero_()
+        actor.pair_encoder[2].weight[0, 0] = 1.0
+        actor.operation_head[0].weight.zero_()
+        actor.operation_head[0].bias.zero_()
+        actor.operation_head[0].weight[0, 32] = 1.0
+        actor.operation_head[2].weight.zero_()
+        actor.operation_head[2].bias.zero_()
+        actor.operation_head[2].weight[OP_PROACTIVE, 0] = 1.0
+
     x0 = torch.zeros(HYBRID_YC_OBS_DIM, dtype=torch.float32)
     x1 = x0.clone()
     x1[YC_CONTEXT_DIM + 3] = 1.0

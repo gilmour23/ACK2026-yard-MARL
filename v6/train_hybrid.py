@@ -175,6 +175,7 @@ def train_hybrid_ppo(
 
     episodes_seen = 0
     global_step = 0
+    seen_training_scenarios: set[int] = set()
     update_idx = 0
     episode_records: list[dict] = []
     update_records: list[dict] = []
@@ -210,6 +211,9 @@ def train_hybrid_ppo(
 
         for _ in range(batch_episodes):
             scenario = sampler.next()
+            while int(scenario) in seen_training_scenarios:
+                scenario = sampler.next()
+            seen_training_scenarios.add(int(scenario))
             scenario_seed_buf.append(int(scenario))
             env = ResourceMARLYardEnv(
                 seed=scenario,
@@ -663,6 +667,7 @@ def train_hybrid_ppo(
             "numpy_random_state": np.random.get_state(),
             "torch_rng_state": torch.get_rng_state(),
             "scenario_sampler_state": sampler.rng.getstate(),
+            "training_scenario_seeds": sorted(seen_training_scenarios),
         },
         checkpoint_path,
     )

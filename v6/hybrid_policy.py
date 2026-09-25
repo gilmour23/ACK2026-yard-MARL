@@ -207,13 +207,14 @@ class CandidateAwareYCOperationActor(nn.Module):
         self.initialize_operation_head(proactive_bias)
 
     def initialize_operation_head(self, proactive_bias: float) -> None:
-        # Keep the initial proactive preference conservative while retaining a
-        # small nonzero sensitivity to candidate features from the first update.
+        # Exact common initialization: when both operations are feasible,
+        # P(Proactive)=0.10 independent of resource visibility/candidate values.
+        # Candidate sensitivity is learned after the first PPO head update.
         last = self.operation_head[-1]
         if not isinstance(last, nn.Linear):
             raise TypeError("operation head final layer must be Linear")
         with torch.no_grad():
-            nn.init.normal_(last.weight, mean=0.0, std=0.01)
+            last.weight.zero_()
             last.bias.zero_()
             last.bias[OP_PROACTIVE] = float(proactive_bias)
 
@@ -336,7 +337,7 @@ class HybridCentralizedSingleModel(nn.Module):
         last = self.operation_head[-1]
         assert isinstance(last, nn.Linear)
         with torch.no_grad():
-            nn.init.normal_(last.weight, mean=0.0, std=0.01)
+            last.weight.zero_()
             last.bias.zero_()
             last.bias[OP_PROACTIVE] = float(proactive_bias)
 

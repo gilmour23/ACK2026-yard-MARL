@@ -145,9 +145,9 @@ def train_hybrid_ppo(
     device = torch.device("cpu")
     sampler = ScenarioSampler(config.seed + 1000)
 
-    init_seed = sampler.next()
+    # Architecture initialization must not consume a training scenario seed.
     init_env = ResourceMARLYardEnv(
-        seed=init_seed,
+        seed=1,
         arrival_rate_per_hour=config.arrival_rate_per_hour,
         include_resource_state=config.include_resource_state,
         truck_wait_weight=config.truck_wait_weight,
